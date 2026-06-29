@@ -3,22 +3,32 @@ use actix_web::web::ServiceConfig;
 use actixutils::{Identity, Validate};
 use anyhow::Result;
 use emailgrid::EmailingContext;
-use mgk::{Module as Mgk, Sender};
-use push::Config;
+use mgk::{Module as Mgk, Sender, IdResolver};
+use push::{NotificationRequest,Config};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite};
 use std::env;
 use std::sync::Arc;
-use typed_eventbus::EventStream;
+use typed_eventbus::{EventStream, Identifier};
 
 struct Push(Config);
 struct Console;
 struct Email(EmailingContext);
 
+struct MyIdResolver;
+
+#[async_trait::async_trait]
+impl IdResolver for MyIdResolver{
+    async fn resolve(&self, id:Identifier)->Result<Uuid>{
+        Ok(Uuid::new_v4())
+    }
+}
+
 #[async_trait::async_trait]
 impl Sender for Push {
-    async fn send(&self, _address: String, _subject: String, message: String) -> Result<()> {
-        self.0.push("push".to_string(), message);
+    async fn send(&self, address: String, _subject: String, message: String) -> Result<()> {
+        let notification = NotificationRequest{message, targets: vec![address]};
+        self.0.push("push".to_string(), notification);
         Ok(())
     }
     fn get_name(&self) -> std::string::String {
@@ -89,10 +99,11 @@ impl Module {
         let email_subjects = get_list("email.subjects");
         let push_subjects = get_list("push.subjects");
         let console_subjects = get_list("console.subjects");
+        let idres = Arc::new(MyIdResolver);
         let console = Mgk::new(
             pool.clone(),
             es.clone(),
-            Arc::new(Console {}),
+            Arc::new(Console {}),idres.clone(),
             console_subjects,
         )
         .await?;
@@ -100,14 +111,14 @@ impl Module {
         let push_mgk = Mgk::new(
             pool.clone(),
             es.clone(),
-            Arc::new(Push(push_.clone())),
+            Arc::new(Push(push_.clone())),idres.clone(),
             push_subjects,
         )
         .await?;
         let email = Mgk::new(
             pool.clone(),
             es.clone(),
-            Arc::new(Email(emailer)) as Arc<dyn Sender>,
+            Arc::new(Email(emailer)) as Arc<dyn Sender>,idres.clone(),
             email_subjects,
         )
         .await?;
