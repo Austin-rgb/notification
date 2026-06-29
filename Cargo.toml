@@ -6,13 +6,13 @@ edition = "2024"
 [dependencies]
 actix-web = "4.13.0"
 async-trait = "0.1.89"
-sqlx = { version = "0.8.6", features = ["sqlite"] }
-serde = "1.0.228"
+sqlx = { version = "0.8.6", features = ["sqlite", "uuid"] }
 uuid = "1.23.1"
-chrono = { version = "0.4.44", features = ["serde"] }
 actixutils = { git = "https://github.com/Austin-rgb/actixutils" }
 typed-eventbus = { git = "https://github.com/Austin-rgb/event-stream" }
 emailgrid = { git = "https://github.com/Austin-rgb/emailgrid" }
 push = { git = "https://github.com/Austin-rgb/push" }
 mgk = { git = "https://github.com/Austin-rgb/mgk" }
 anyhow = "1.0.103"
+serde = "1.0.228"
+tracing = "0.1.44"

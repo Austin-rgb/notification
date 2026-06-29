@@ -555,7 +555,6 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
- "serde",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -2115,12 +2114,12 @@ dependencies = [
  "actixutils",
  "anyhow",
  "async-trait",
- "chrono",
  "emailgrid",
  "mgk",
  "push",
  "serde",
  "sqlx",
+ "tracing",
  "typed-eventbus",
  "uuid",
 ]
@@ -3325,6 +3324,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -3403,6 +3403,7 @@ dependencies = [
  "stringprep",
  "thiserror 2.0.18",
  "tracing",
+ "uuid",
  "whoami",
 ]
 
@@ -3440,6 +3441,7 @@ dependencies = [
  "stringprep",
  "thiserror 2.0.18",
  "tracing",
+ "uuid",
  "whoami",
 ]
 
@@ -3465,6 +3467,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]
