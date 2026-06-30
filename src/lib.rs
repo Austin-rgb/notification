@@ -1,4 +1,4 @@
-use actix_web::{web,HttpResponse, web::ServiceConfig, post, Responder};
+use actix_web::{web, web::ServiceConfig};
 use actixutils::{Identity, Validate};
 use anyhow::Result;
 use emailgrid::EmailingContext;
@@ -9,7 +9,8 @@ use sqlx::{Pool, Sqlite};
 use std::env;
 use std::sync::Arc;
 use typed_eventbus::{EventStream, Identifier};
-
+mod tagging;
+use crate::tagging::{register_tag, list_tags, delete_tag};
 struct Push(Config);
 struct Console;
 struct Email(EmailingContext);
@@ -39,37 +40,6 @@ impl IdResolver for MyIdResolver {
 
                 Ok(user_id)
             }
-        }
-    }
-}
-
-#[derive(serde::Deserialize)]
-pub struct RegisterTagRequest {
-    pub tag: String,
-    pub user_id: Uuid,
-}
-
-#[post("/tags")]
-async fn register_tag(
-    pool: web::Data<SqlitePool>,
-    req: web::Json<RegisterTagRequest>,
-) -> impl Responder {
-    match sqlx::query(
-        r#"
-        INSERT INTO notification_tags(tag, user_id)
-        VALUES(?, ?)
-        ON CONFLICT(tag)
-        DO UPDATE SET user_id = excluded.user_id
-        "#,
-    )
-    .bind(&req.tag)
-    .bind(req.user_id)
-    .execute(pool.get_ref())
-    .await{
-        Ok(_)=>HttpResponse::Ok().finish(),
-        Err(e)=>{
-            tracing::error!("error in inserting tag: {e}");
-            HttpResponse::InternalServerError().finish()
         }
     }
 }
@@ -178,14 +148,13 @@ impl Module {
     }
 
     pub fn config(&self, cfg: &mut ServiceConfig, namespace: &str) {
-        cfg.app_data(web::Data::new(self.pool.clone()))
-            .service(register_tag)
-            .service(
-                web::scope(namespace)
-                    .configure(|cfg| self.push_.config(cfg, "/ws"))
-                    .configure(|cfg| self.emailer.config(cfg, "/email"))
-                    .configure(|cfg| self.push_mgk.config(cfg, "/push"))
-                    .configure(|cfg| self.console.config(cfg, "/console")),
-            );
+        cfg.app_data(web::Data::new(self.pool.clone())).service(
+            web::scope(namespace)
+                .service(register_tag).service(list_tags).service(delete_tag)
+                .configure(|cfg| self.push_.config(cfg, "/ws"))
+                .configure(|cfg| self.emailer.config(cfg, "/email"))
+                .configure(|cfg| self.push_mgk.config(cfg, "/push"))
+                .configure(|cfg| self.console.config(cfg, "/console")),
+        );
     }
 }
