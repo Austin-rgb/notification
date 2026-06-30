@@ -10,7 +10,7 @@ use std::env;
 use std::sync::Arc;
 use typed_eventbus::{EventStream, Identifier};
 mod tagging;
-use crate::tagging::{register_tag, list_tags, delete_tag};
+use crate::tagging::{delete_tag, list_tags, register_tag};
 struct Push(Config);
 struct Console;
 struct Email(EmailingContext);
@@ -150,7 +150,9 @@ impl Module {
     pub fn config(&self, cfg: &mut ServiceConfig, namespace: &str) {
         cfg.app_data(web::Data::new(self.pool.clone())).service(
             web::scope(namespace)
-                .service(register_tag).service(list_tags).service(delete_tag)
+                .service(register_tag)
+                .service(list_tags)
+                .service(delete_tag)
                 .configure(|cfg| self.push_.config(cfg, "/ws"))
                 .configure(|cfg| self.emailer.config(cfg, "/email"))
                 .configure(|cfg| self.push_mgk.config(cfg, "/push"))
