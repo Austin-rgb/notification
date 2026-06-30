@@ -241,7 +241,29 @@ dependencies = [
 
 [[package]]
 name = "actixutils"
-version = "0.1.0"
+version = "0.1.2"
+dependencies = [
+ "actix-web",
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "chrono",
+ "dashmap",
+ "futures-util",
+ "jsonwebtoken",
+ "rand 0.10.1",
+ "reqwest 0.13.3",
+ "serde",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "actixutils"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "221cb82419ea69eab42cdc00ce26c21b2bf457b767b7f8c353b1a1ba2047313b"
 dependencies = [
  "actix-web",
  "anyhow",
@@ -1013,7 +1035,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1555,7 +1577,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -1770,7 +1792,7 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2012,7 +2034,7 @@ name = "mgk"
 version = "0.1.0"
 dependencies = [
  "actix-web",
- "actixutils",
+ "actixutils 0.1.2",
  "anyhow",
  "async-trait",
  "moka",
@@ -2021,7 +2043,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tracing",
- "typed-eventbus",
+ "typed-eventbus 0.2.1",
  "uuid",
  "validator",
 ]
@@ -2111,7 +2133,7 @@ name = "notification"
 version = "0.1.0"
 dependencies = [
  "actix-web",
- "actixutils",
+ "actixutils 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "anyhow",
  "async-trait",
  "emailgrid",
@@ -2120,7 +2142,7 @@ dependencies = [
  "serde",
  "sqlx",
  "tracing",
- "typed-eventbus",
+ "typed-eventbus 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "uuid",
 ]
 
@@ -2535,7 +2557,7 @@ dependencies = [
  "actix",
  "actix-web",
  "actix-web-actors",
- "actixutils",
+ "actixutils 0.1.2",
  "async-trait",
  "reqwest 0.13.3",
  "serde",
@@ -2557,7 +2579,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -2595,7 +2617,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -2887,7 +2909,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2945,7 +2967,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3259,7 +3281,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3567,7 +3589,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3876,7 +3898,27 @@ dependencies = [
 
 [[package]]
 name = "typed-eventbus"
-version = "0.2.0"
+version = "0.2.1"
+dependencies = [
+ "async-nats",
+ "async-trait",
+ "bytes",
+ "dashmap",
+ "futures",
+ "jiff",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "typed-eventbus"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1468e92dbefc3fa95631c8fc4a08e7d0d96e257e799d082d34cdfbb0e6d660f"
 dependencies = [
  "async-nats",
  "async-trait",
@@ -4222,7 +4264,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -8,8 +8,8 @@ actix-web = "4.13.0"
 async-trait = "0.1.89"
 sqlx = { version = "0.8.6", features = ["sqlite", "uuid"] }
 uuid = "1.23.1"
-actixutils = { git = "https://github.com/Austin-rgb/actixutils" }
-typed-eventbus = { git = "https://github.com/Austin-rgb/event-stream" }
+actixutils = "0.1.2"
+typed-eventbus = "0.2.1"
 emailgrid = { git = "https://github.com/Austin-rgb/emailgrid" }
 push = { git = "https://github.com/Austin-rgb/push" }
 mgk = { git = "https://github.com/Austin-rgb/mgk" }
