@@ -98,7 +98,7 @@ where
                 Ok(r) => r.to_string(),
                 Err(e) => {
                     tracing::error!("invalid identifier: {e}; skipping event on subject={subject}");
-                    return;
+                    continue;
                 }
             };
             let address = match self.state.get(&user_id, &subject).await {
@@ -106,7 +106,7 @@ where
                 Ok(None) => return, // No preference set for this user+subject — normal case.
                 Err(e) => {
                     tracing::error!(error = %e, user = %user_id, subject, "Error reading preference");
-                    return;
+                    continue;
                 }
             };
             if let Err(e) = self
