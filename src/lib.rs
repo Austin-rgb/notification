@@ -91,7 +91,7 @@ impl IdResolver for MyIdResolver {
 
             Identifier::Tag(tag) => {
                 let user_id: Uuid =
-                    sqlx::query_scalar("SELECT user_id FROM notification_tags WHERE tag = ?")
+                    sqlx::query_scalar("SELECT user_id FROM notification_tags WHERE tag = $1")
                         .bind(tag)
                         .fetch_one(&self.pool)
                         .await?;
