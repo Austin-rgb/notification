@@ -1,135 +1,116 @@
-# Notification Preferences Client
+# notification
 
-A lightweight Python client for interacting with a Notification Preferences Service. The client provides both synchronous and asynchronous APIs to manage default notification channels and user-specific preferences.
+A Rust/Actix Web microservice for the Ferrumec ecosystem that manages per-user
+notification preferences and delivers notifications over three channels —
+**email**, **push** (WebSocket), and **console** — driven by events on a
+shared NATS-based event bus (`typed-eventbus`).
 
-This repository contains a single-file client implementation (client.py) that implements common operations such as setting/getting defaults, setting/getting user preferences, batch operations, health checks, and retry configuration.
+## How it works
 
-Features
+1. A producer service publishes an event to the bus (via `typed-eventbus`),
+   addressed to an *audience* of `Identifier`s (a `Uuid` or a user-defined
+   `Tag`).
+2. This service subscribes to the configured subjects for each channel
+   (email/push/console). When a matching event arrives, it:
+   - resolves each audience identifier to a `user_id`,
+   - looks up that user's preference (has the user opted into this
+     subject on this channel, and what address/target should receive it),
+   - hands the message off to the channel's `Sender` for delivery.
+3. Users opt in to a channel/subject via a two-step, OTP-confirmed flow:
+   `POST /preferences/set` → OTP delivered to the target address →
+   `POST /preferences/confirm` with the OTP → preference is written and a
+   `contact.channel.confirmed` event is published.
 
-- Synchronous and asynchronous interfaces (requests + aiohttp)
-- Support for common delivery channels: email, push, sms, in_app
-- Convenience dataclasses for responses and batch requests
-- Configurable retry behavior and request timeouts
-- Context-manager support for both sync and async usage
-- Basic error handling via typed exceptions
+## Channels
 
-Quickstart
+| Channel | Delivery | Backend |
+|---|---|---|
+| `email` | Brevo or Resend, HTML rendered with Tera templates | `emailgrid` |
+| `push`  | Actix WebSocket session per connected user | `push` |
+| `console` | Logs to stdout (useful for local dev/testing) | `Console` sender in `lib.rs` |
 
-Requirements
+Each channel gets its own preference table (`EmailPreference`,
+`PushPreference`, `ConsolePreference`) and its own allow-list of subjects it
+will react to, configured independently.
 
-- Python 3.8+
-- requests
-- aiohttp
+## Tagging
 
-Install
+In addition to addressing events directly by `user_id`, producers can
+address an audience by an opaque `Tag` string. Tags are registered via the
+`/tags` CRUD endpoints (backed by `viewset`) and resolved to a `user_id` by
+`MyIdResolver` at delivery time.
 
-You can install the client directly from this repository (no PyPI package published):
+## API
 
-pip install git+https://github.com/Austin-rgb/notification.git
+All routes below are mounted under whatever namespace the host application
+passes to `Module::config`.
 
-Or copy `client.py` into your project and import NotificationPrefsClient directly.
+### Preferences (per channel: `/email`, `/push`, `/console`)
 
-Basic usage (synchronous)
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/{channel}/preferences/set` | Submit a batch of `{subject, address}` preferences (all sharing one address). Returns a `nonce`; sends an OTP to the address. |
+| `POST` | `/{channel}/preferences/confirm` | Confirm with `{nonce, token}`. Writes the preference rows and publishes `contact.channel.confirmed`. |
+| `GET` | `/{channel}/preferences/get?subject=...` | Look up the confirmed address for the caller + subject. |
 
-```python
-from client import NotificationPrefsClient, Channel
+All three require an authenticated `Identity` (via `actixutils::Auth`).
 
-client = NotificationPrefsClient("http://localhost:8080", api_version="v1")
+### Push / WebSocket
 
-# Set a default channel
-client.set_default("marketing", Channel.EMAIL)
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/push/ws/` | Upgrade to a WebSocket connection for the authenticated user. Supports heartbeat ping/pong and `{"type": "private", "to": ..., "content": ...}` client messages for direct peer messaging. |
 
-# Get the default channel
-channel = client.get_default("marketing")
-print(channel)
+### Tags
 
-# Set a user preference
-client.set_preference("user123", "marketing", Channel.PUSH)
+| Method | Path | Description |
+|---|---|---|
+| `GET/POST/PUT/DELETE` | `/tags` | Standard CRUD viewset over `{tag, user_id}`. |
 
-# Get effective preference (falls back to default if no user preference)
-pref = client.get_preference("user123", "marketing")
-print(pref)
+## Configuration
 
-# Use context manager
-with NotificationPrefsClient("http://localhost:8080", api_version="v1") as client:
-    client.set_default("security", Channel.PUSH)
+Set via environment variables before startup:
+
+| Variable | Purpose |
+|---|---|
+| `email.subjects` | Comma-separated list of event subjects the email channel subscribes to |
+| `push.subjects` | Comma-separated list of event subjects the push channel subscribes to |
+| `console.subjects` | Comma-separated list of event subjects the console channel subscribes to |
+| `BREVO_API_KEY` | API key for the Brevo email backend (if used) |
+| `RESEND_API_KEY` | API key for the Resend email backend (if used) |
+
+> All three `*.subjects` variables are required at startup — the service
+> panics on boot if any is unset.
+
+Email HTML bodies are rendered from Tera templates under `./templates/`,
+one file per subject (`{subject}.html`), loaded once at startup.
+
+## Integration
+
+```rust
+let module = notification::Module::new(
+    pg_pool,
+    emailing_context,   // EmailingContext (Brevo/Resend + templates)
+    identity_validator, // Arc<dyn Validate<Identity>>
+    event_stream,        // Arc<dyn EventStream>
+).await?;
+
+// in your actix_web App::configure:
+module.config(&mut cfg, "/notifications");
 ```
 
-Basic usage (asynchronous)
+## Dependencies
 
-```python
-import asyncio
-from client import NotificationPrefsClient, Channel
+Built on the Ferrumec Rust stack: `actix-web`, `actix` / `actix-web-actors`
+(WebSocket actors), `sqlx` (Postgres), `moka` (in-memory caching for
+preferences and pending OTPs), `typed-eventbus` (event bus pub/sub),
+`viewset` (CRUD scaffolding), `actixutils` (auth/identity), `validator`,
+`tera` (email templates), `reqwest` (email API calls).
 
-async def main():
-    async with NotificationPrefsClient("http://localhost:8080") as client:
-        await client.async_set_preference("user789", "marketing", Channel.EMAIL)
-        pref = await client.async_get_preference("user789", "marketing")
-        print(pref)
+## Known limitations
 
-# asyncio.run(main())
-```
-
-API reference (high level)
-
-Classes
-
-- NotificationPrefsClient
-  - __init__(base_url, api_version='v1', timeout=30.0, retry_config=None, headers=None, verify_ssl=True)
-  - set_default(subject, channel)
-  - get_default(subject)
-  - get_default_or_none(subject)
-  - set_preference(user, subject, channel)
-  - get_preference(user, subject) -> PreferenceResponse
-  - get_preference_or_none(user, subject)
-  - batch_set_defaults(defaults: List[dict])
-  - batch_set_preferences(preferences: List[BatchPreferenceRequest])
-  - health_check()
-  - async equivalents: async_set_default, async_get_default, async_set_preference, async_get_preference, async_batch_set_preferences
-  - close(), async_close(), context manager support (__enter__/__exit__, __aenter__/__aexit__)
-
-- Channel (Enum): EMAIL, PUSH, SMS, IN_APP
-
-- PreferenceResponse (dataclass): user, subject, channel, is_default
-
-- BatchPreferenceRequest (dataclass): user, subject, channel
-
-Exceptions
-
-- APIError: Base exception for API-related errors
-- NotFoundError: Raised when a resource is not found (404)
-- ServerError: Raised for server-side errors (5xx)
-- ValidationError: Raised for client-side validation errors (4xx)
-
-Configuration
-
-- Retry behavior can be customized via the RetryConfig class passed to the client constructor. The default retry strategy retries on 429 and 5xx statuses and performs exponential backoff.
-- Additional headers can be provided via the headers parameter.
-- SSL verification is configurable via verify_ssl.
-
-Repository layout
-
-- client.py - Primary client implementation and usage examples
-- migrations/ - (empty directory placeholder for database migrations)
-- src/ - (empty directory placeholder)
-- database.db - example/local SQLite DB file (committed in this repo)
-- Cargo.toml, Cargo.lock - appear to be present but are unrelated to the Python client; treat this repository primarily as a Python client implementation.
-
-Notes and caveats
-
-- The client expects the server API to expose endpoints under the configured base URL and api_version prefix. Endpoints referenced by the client include:
-  - /{api_version}/defaults/set
-  - /{api_version}/defaults/get
-  - /{api_version}/preferences/set
-  - /{api_version}/preferences/get
-
-- Some helper methods use heuristics (for example, _has_explicit_preference) and may require server-side support for fully accurate behavior.
-- The repository currently includes a committed SQLite database file (database.db). Consider removing or replacing it with migrations and fixtures if sensitive data is present.
-
-Contributing
-
-Contributions welcome. Open an issue or create a pull request with changes. Please include tests and update the README where appropriate.
-
-License
-
-This project is provided under the repository LICENSE file.
+- Each user_id supports a single active WebSocket connection at a time;
+  connecting from a second device will replace the first.
+- Email delivery failures from the provider API are not currently
+  surfaced as errors back to the caller of `/preferences/set` — check
+  service logs.
