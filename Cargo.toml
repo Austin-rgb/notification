@@ -10,10 +10,15 @@ sqlx = { version = "0.9", features = ["postgres", "uuid"] }
 uuid = "1.23.1"
 actixutils = "0.1.2"
 typed-eventbus = "0.2.1"
-emailgrid = { git = "https://github.com/Austin-rgb/emailgrid" }
-push = { git = "https://github.com/Austin-rgb/push" }
-mgk = { git = "https://github.com/Austin-rgb/mgk" }
 anyhow = "1.0.103"
 serde = "1.0.228"
 tracing = "0.1.44"
 viewset="0.4"
+serde_json = "1.0.151"
+moka = "0.12.16"
+rand = "0.10.2"
+validator = { version = "0.21.0", features = ["derive"] }
+actix = "0.13.5"
+actix-web-actors = "4.3.1"
+reqwest = { version = "0.13.4", features = ["json"] }
+tera = "1.20.1"

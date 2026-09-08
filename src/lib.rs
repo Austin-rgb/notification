@@ -9,6 +9,9 @@ use sqlx::{FromRow, Pool, Postgres};
 use std::env;
 use std::sync::Arc;
 use typed_eventbus::{EventStream, Identifier};
+pub mod emailgrid;
+mod mgk;
+mod push;
 mod tagging;
 use serde::{Deserialize, Serialize};
 use viewset::{DefaultRepo, Entity, ViewSet};
@@ -109,9 +112,6 @@ impl Sender for Push {
         self.0.push("push".to_string(), notification);
         Ok(())
     }
-    fn get_name(&self) -> std::string::String {
-        "push".to_string()
-    }
 }
 
 #[async_trait::async_trait]
@@ -120,9 +120,6 @@ impl Sender for Email {
         let _ = self.0.send(address, subject, message).await;
         Ok(())
     }
-    fn get_name(&self) -> std::string::String {
-        "email".to_string()
-    }
 }
 
 #[async_trait::async_trait]
@@ -130,10 +127,6 @@ impl Sender for Console {
     async fn send(&self, address: String, subject: String, message: String) -> Result<()> {
         println!("message sent: address = {address}, subject = {subject}, message = {message}");
         Ok(())
-    }
-
-    fn get_name(&self) -> std::string::String {
-        "console".to_string()
     }
 }
 
