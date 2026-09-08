@@ -132,14 +132,14 @@ where
         id_resolver: Arc<dyn IdResolver>,
         subjects: Vec<String>,
     ) -> Result<Self, anyhow::Error> {
-        let state = Arc::new(Preferences::new(pool.clone(), es.clone(), subjects).await?);
+        let state = Arc::new(Preferences::new(pool.clone(), es.clone(), subjects.clone()).await?);
 
         let module = Self {
             sender,
             id_resolver,
             state: state.clone(),
         };
-        module.subscribe(es, state).await;
+        module.subscribe(es, state, subjects).await;
         Ok(module)
     }
 
@@ -152,28 +152,33 @@ where
         );
     }
 
-    pub async fn subscribe(&self, es: Arc<dyn EventStream>, state: Arc<Preferences<Repo>>) {
+    pub async fn subscribe(
+        &self,
+        es: Arc<dyn EventStream>,
+        state: Arc<Preferences<Repo>>,
+        subjects: Vec<String>,
+    ) {
         // Subscribe once per known subject rather than using the catch-all ">",
         // so we only wake up for events this module actually cares about.
-        // The allowed subjects are stored on Preferences; we re-derive them here
-        // from the subjects vec passed at construction via the Module public API.
         //
         // Fall back to a single ">" subscription if the subjects list is empty,
         // which preserves the old behaviour for callers that don't restrict subjects.
-        match es
-            .clone()
-            .subscribe(
-                ">".to_string(),
-                Arc::new(OnNotification {
-                    sender: self.sender.clone(),
-                    id_resolver: self.id_resolver.clone(),
-                    state,
-                }),
-            )
-            .await
-        {
-            Ok(_) => (),
-            Err(e) => tracing::error!(error = %e, "Error subscribing to event stream"),
+        let handler = Arc::new(OnNotification {
+            sender: self.sender.clone(),
+            id_resolver: self.id_resolver.clone(),
+            state,
+        });
+
+        let patterns: Vec<String> = if subjects.is_empty() {
+            vec![">".to_string()]
+        } else {
+            subjects
         };
+
+        for subject in patterns {
+            if let Err(e) = es.clone().subscribe(subject.clone(), handler.clone()).await {
+                tracing::error!(error = %e, subject, "Error subscribing to event stream");
+            }
+        }
     }
 }
