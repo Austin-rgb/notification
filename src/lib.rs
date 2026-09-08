@@ -2,25 +2,80 @@ use actix_web::{web, web::ServiceConfig};
 use actixutils::{Identity, Validate};
 use anyhow::Result;
 use emailgrid::EmailingContext;
-use mgk::{IdResolver, Module as Mgk, Sender};
+use mgk::{CreatePreference, GetAddress, IdResolver, Module as Mgk, Sender};
 use push::{Config, NotificationRequest};
-use sqlx::SqlitePool;
-use sqlx::{Pool, Sqlite};
+use sqlx::PgPool;
+use sqlx::{FromRow, Pool, Postgres};
 use std::env;
 use std::sync::Arc;
 use typed_eventbus::{EventStream, Identifier};
 mod tagging;
-use crate::tagging::{delete_tag, list_tags, register_tag};
+use serde::{Deserialize, Serialize};
+use viewset::{DefaultRepo, Entity, ViewSet};
 struct Push(Config);
 struct Console;
 struct Email(EmailingContext);
 
+#[derive(Entity, Serialize, Deserialize, Clone, FromRow)]
+#[entity(create = "CreatePreference")]
+struct EmailPreference {
+    #[entity(skip_create)]
+    id: Uuid,
+    pub subject: String,
+    pub address: String,
+    pub user: String,
+}
+
+impl GetAddress for EmailPreference {
+    fn get_address(&self) -> String {
+        self.address.clone()
+    }
+}
+
+type EmailRepo = DefaultRepo<EmailPreference>;
+
+#[derive(Entity, Serialize, Deserialize, Clone, FromRow)]
+#[entity(create = "CreatePreference")]
+struct PushPreference {
+    #[entity(skip_create)]
+    id: Uuid,
+    pub subject: String,
+    pub address: String,
+    pub user: String,
+}
+
+impl GetAddress for PushPreference {
+    fn get_address(&self) -> String {
+        self.address.clone()
+    }
+}
+
+type PushRepo = DefaultRepo<PushPreference>;
+
+#[derive(Entity, Serialize, Deserialize, Clone, FromRow)]
+#[entity(create = "CreatePreference")]
+struct ConsolePreference {
+    #[entity(skip_create)]
+    id: Uuid,
+    pub subject: String,
+    pub address: String,
+    pub user: String,
+}
+
+impl GetAddress for ConsolePreference {
+    fn get_address(&self) -> String {
+        self.address.clone()
+    }
+}
+
+type ConsoleRepo = DefaultRepo<ConsolePreference>;
+
 pub struct MyIdResolver {
-    pool: SqlitePool,
+    pool: PgPool,
 }
 
 impl MyIdResolver {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 }
@@ -82,13 +137,12 @@ impl Sender for Console {
     }
 }
 
-#[derive(Clone)]
 pub struct Module {
-    emailer: Mgk,
-    push_mgk: Mgk,
+    emailer: Mgk<EmailRepo>,
+    push_mgk: Mgk<PushRepo>,
     push_: Config,
-    console: Mgk,
-    pool: Pool<Sqlite>,
+    console: Mgk<ConsoleRepo>,
+    pool: Pool<Postgres>,
 }
 
 use uuid::Uuid;
@@ -103,7 +157,7 @@ fn get_list(name: &str) -> Vec<String> {
 
 impl Module {
     pub async fn new(
-        pool: Pool<Sqlite>,
+        pool: Pool<Postgres>,
         emailer: EmailingContext,
         validator: Arc<dyn Validate<Identity>>,
         es: Arc<dyn EventStream>,
@@ -112,8 +166,9 @@ impl Module {
         let push_subjects = get_list("push.subjects");
         let console_subjects = get_list("console.subjects");
         let idres = Arc::new(MyIdResolver::new(pool.clone()));
+        let repo: ConsoleRepo = pool.clone().into();
         let console = Mgk::new(
-            pool.clone(),
+            repo.into(),
             es.clone(),
             Arc::new(Console {}),
             idres.clone(),
@@ -121,16 +176,18 @@ impl Module {
         )
         .await?;
         let push_ = Config::new(validator).await;
+        let repo: PushRepo = pool.clone().into();
         let push_mgk = Mgk::new(
-            pool.clone(),
+            repo.into(),
             es.clone(),
             Arc::new(Push(push_.clone())),
             idres.clone(),
             push_subjects,
         )
         .await?;
+        let repo: EmailRepo = pool.clone().into();
         let email = Mgk::new(
-            pool.clone(),
+            repo.into(),
             es.clone(),
             Arc::new(Email(emailer)) as Arc<dyn Sender>,
             idres.clone(),
@@ -150,9 +207,9 @@ impl Module {
     pub fn config(&self, cfg: &mut ServiceConfig, namespace: &str) {
         cfg.app_data(web::Data::new(self.pool.clone())).service(
             web::scope(namespace)
-                .service(register_tag)
-                .service(list_tags)
-                .service(delete_tag)
+                .configure(|cfg| {
+                    tagging::create_tag_viewset(self.pool.clone()).configure(cfg, "tags")
+                })
                 .configure(|cfg| self.push_.config(cfg, "/ws"))
                 .configure(|cfg| self.emailer.config(cfg, "/email"))
                 .configure(|cfg| self.push_mgk.config(cfg, "/push"))

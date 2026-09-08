@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 actix-web = "4.13.0"
 async-trait = "0.1.89"
-sqlx = { version = "0.8.6", features = ["sqlite", "uuid"] }
+sqlx = { version = "0.9", features = ["postgres", "uuid"] }
 uuid = "1.23.1"
 actixutils = "0.1.2"
 typed-eventbus = "0.2.1"
@@ -16,3 +16,4 @@ mgk = { git = "https://github.com/Austin-rgb/mgk" }
 anyhow = "1.0.103"
 serde = "1.0.228"
 tracing = "0.1.44"
+viewset="0.4"
