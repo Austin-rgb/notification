@@ -33,12 +33,27 @@ pub trait Sender: Send + Sync {
     async fn send(&self, payload: &EmailPayload) -> SendResult;
 }
 
-pub struct Brevo(pub String);
+const BREVO_DEFAULT_URL: &str = "https://api.brevo.com/v3/smtp/email";
+const RESEND_DEFAULT_URL: &str = "https://api.resend.com/emails";
+
+pub struct Brevo {
+    pub api_key: String,
+    pub url: String,
+}
 
 impl Brevo {
+    /// Reads `BREVO_API_KEY` (and optional `BREVO_API_URL`) from the environment.
     pub fn new() -> Result<Self, env::VarError> {
         let api_key = env::var("BREVO_API_KEY")?;
-        Ok(Brevo(api_key))
+        Ok(Self::with_config(api_key, env::var("BREVO_API_URL").ok()))
+    }
+
+    /// `url` overrides the provider endpoint (used to point at a stub in tests).
+    pub fn with_config(api_key: String, url: Option<String>) -> Self {
+        Self {
+            api_key,
+            url: url.unwrap_or_else(|| BREVO_DEFAULT_URL.to_string()),
+        }
     }
 }
 
@@ -47,9 +62,9 @@ impl Sender for Brevo {
     async fn send(&self, payload: &EmailPayload) -> SendResult {
         let client = Client::new();
         let res = client
-            .post("https://api.brevo.com/v3/smtp/email")
+            .post(&self.url)
             .header("accept", "application/json")
-            .header("api-key", self.0.clone())
+            .header("api-key", self.api_key.clone())
             .json(payload)
             .send()
             .await?;
@@ -57,12 +72,23 @@ impl Sender for Brevo {
     }
 }
 
-pub struct Resend(pub String);
+pub struct Resend {
+    pub api_key: String,
+    pub url: String,
+}
 
 impl Resend {
+    /// Reads `RESEND_API_KEY` (and optional `RESEND_API_URL`) from the environment.
     pub fn new() -> Result<Self, env::VarError> {
         let api_key = env::var("RESEND_API_KEY")?;
-        Ok(Resend(api_key))
+        Ok(Self::with_config(api_key, env::var("RESEND_API_URL").ok()))
+    }
+
+    pub fn with_config(api_key: String, url: Option<String>) -> Self {
+        Self {
+            api_key,
+            url: url.unwrap_or_else(|| RESEND_DEFAULT_URL.to_string()),
+        }
     }
 }
 
@@ -85,7 +111,7 @@ impl Sender for Resend {
         }
 
         let client = Client::new();
-        let key = self.0.clone();
+        let key = self.api_key.clone();
 
         let rp = ResendPayload {
             from: format!("{} <{}>", payload.sender.name, payload.sender.email),
@@ -103,7 +129,7 @@ impl Sender for Resend {
         };
 
         let res = client
-            .post("https://api.resend.com/emails")
+            .post(&self.url)
             .header("Authorization", format!("Bearer {}", key))
             .header("Content-Type", "application/json")
             .json(&rp)

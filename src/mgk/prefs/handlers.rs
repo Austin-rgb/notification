@@ -4,9 +4,10 @@ use crate::mgk::Sender;
 use crate::mgk::prefs::db::Preferences;
 use crate::mgk::prefs::db::{PreferenceBatch, Token};
 use crate::mgk::{CreatePreference, GetAddress};
+use crate::session::AuthSession;
 use actix_web::web;
 use actix_web::{HttpResponse, Responder};
-use actixutils::{Auth, Identity};
+use actixutils::Session;
 use serde::{Deserialize, Serialize};
 use tracing::error;
 use viewset::{Entity, Repository};
@@ -35,7 +36,7 @@ pub struct ConfirmBody {
 }
 
 pub async fn set_preference<Repo: Repository>(
-    Auth(id): Auth<Identity>,
+    session: Session<AuthSession>,
     state: web::Data<Preferences<Repo>>,
     sender: web::Data<Arc<dyn Sender>>,
     body: web::Json<PreferenceBatch>,
@@ -44,6 +45,8 @@ where
     <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
     <Repo as Repository>::Entity: GetAddress,
 {
+    let session = session.read().await;
+    let user_id = session.user_id.to_string();
     let batch = body.into_inner();
 
     // Capture the address before we move the batch into `set`.
@@ -52,7 +55,7 @@ where
         None => return HttpResponse::BadRequest().body("preferences must not be empty"),
     };
 
-    match state.set(&id.sub.to_string(), batch).await {
+    match state.set(&user_id, batch).await {
         Ok((nonce, otp)) => {
             // Send the OTP to the user's address out-of-band.
             // Log failures rather than silently swallowing them; the HTTP
@@ -68,7 +71,7 @@ where
             if let Err(e) = result {
                 error!(
                     error = %e,
-                    user = %id.sub,
+                    user = %user_id,
                     address = %address,
                     "Failed to deliver OTP; pending entry still recorded"
                 );
@@ -78,7 +81,7 @@ where
         Err(e) => {
             error!(
                 error = %e,
-                user = %id.sub,
+                user = %user_id,
                 "Failed to set user preference batch"
             );
             HttpResponse::Forbidden().body(e.to_string())
@@ -87,7 +90,7 @@ where
 }
 
 pub async fn confirm_preference<Repo: Repository>(
-    Auth(id): Auth<Identity>,
+    session: Session<AuthSession>,
     state: web::Data<Preferences<Repo>>,
     body: web::Json<ConfirmBody>,
 ) -> impl Responder
@@ -95,17 +98,16 @@ where
     <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
     <Repo as Repository>::Entity: GetAddress,
 {
+    let session = session.read().await;
+    let user_id = session.user_id.to_string();
     let body = body.into_inner();
     let token = Token { token: body.token };
-    match state
-        .confirm(&id.sub.to_string(), &body.nonce, &token)
-        .await
-    {
+    match state.confirm(&user_id, &body.nonce, &token).await {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => {
             error!(
                 error = %e,
-                user = %id.sub,
+                user = %user_id,
                 "Failed to confirm user preference"
             );
             HttpResponse::InternalServerError().body(e.to_string())
@@ -114,7 +116,7 @@ where
 }
 
 pub async fn get_preference<Repo: Repository>(
-    Auth(id): Auth<Identity>,
+    session: Session<AuthSession>,
     state: web::Data<Preferences<Repo>>,
     query: web::Query<PreferenceGetQuery>,
 ) -> impl Responder
@@ -122,13 +124,15 @@ where
     <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
     <Repo as Repository>::Entity: GetAddress,
 {
-    match state.get(&id.sub.to_string(), &query.subject).await {
+    let session = session.read().await;
+    let user_id = session.user_id.to_string();
+    match state.get(&user_id, &query.subject).await {
         Ok(Some(channel)) => HttpResponse::Ok().json(channel),
         Ok(None) => HttpResponse::NotFound().finish(),
         Err(e) => {
             error!(
                 error = %e,
-                user = %id.sub,
+                user = %user_id,
                 subject = %query.subject,
                 "Failed to get user preference"
             );

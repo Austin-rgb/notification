@@ -7,13 +7,16 @@ use typed_eventbus::EventMetaData;
 use typed_eventbus::{EventStream, Handler, Identifier};
 use uuid::Uuid;
 mod prefs;
+use crate::config::Settings;
+use crate::kv::KvStore;
 use crate::mgk::prefs::db::Preferences;
 use serde::{Deserialize, Serialize};
 use viewset::{Entity, Repository};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CreatePreference {
-    pub user: String,
+    /// Owner of the preference. (Not called `user`: reserved word in PostgreSQL.)
+    pub user_id: String,
     pub subject: String,
     pub address: String,
 }
@@ -23,9 +26,9 @@ pub trait GetAddress {
 }
 
 impl CreatePreference {
-    pub fn new(user: String, subject: String, address: String) -> Self {
+    pub fn new(user_id: String, subject: String, address: String) -> Self {
         Self {
-            user,
+            user_id,
             subject,
             address,
         }
@@ -103,7 +106,9 @@ where
             };
             let address = match self.state.get(&user_id, &subject).await {
                 Ok(Some(a)) => a,
-                Ok(None) => return, // No preference set for this user+subject — normal case.
+                // No preference for this user+subject is the normal case: skip this
+                // audience member only, the rest of the audience still gets notified.
+                Ok(None) => continue,
                 Err(e) => {
                     tracing::error!(error = %e, user = %user_id, subject, "Error reading preference");
                     continue;
@@ -131,8 +136,12 @@ where
         sender: Arc<dyn Sender>,
         id_resolver: Arc<dyn IdResolver>,
         subjects: Vec<String>,
+        kv: Arc<dyn KvStore>,
+        settings: Settings,
     ) -> Result<Self, anyhow::Error> {
-        let state = Arc::new(Preferences::new(pool.clone(), es.clone(), subjects.clone()).await?);
+        let state = Arc::new(
+            Preferences::new(pool.clone(), es.clone(), subjects.clone(), kv, settings).await?,
+        );
 
         let module = Self {
             sender,

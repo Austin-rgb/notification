@@ -5,7 +5,7 @@ use uuid::Uuid;
 use viewset::{DefaultRepo, DefaultService, DefaultViewSet, Entity};
 
 #[derive(Entity, Serialize, Deserialize, Clone, FromRow)]
-#[entity(create = "CreateTag")]
+#[entity(table = "notification_tags", create = "CreateTag")]
 pub struct Tag {
     #[entity(skip_create)]
     pub id: Uuid,

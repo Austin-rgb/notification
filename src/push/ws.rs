@@ -4,16 +4,15 @@ use actix::{
 use actix_web::{Error, HttpRequest, HttpResponse, get, web};
 use actix_web_actors::ws;
 
-use actixutils::{Auth, Identity, Validate};
+use crate::session::AuthSession;
+use actixutils::Session;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 #[derive(Clone)]
 pub struct Service {
     pub chat_server: Addr<ChatServer>,
-    pub authv: Arc<dyn Validate<Identity>>,
 }
 
 #[derive(Serialize)]
@@ -219,12 +218,13 @@ pub async fn ws_route(
     req: HttpRequest,
     stream: web::Payload,
     state: web::Data<Service>,
-    Auth(claims): Auth<Identity>,
+    session: Session<AuthSession>,
 ) -> Result<HttpResponse, Error> {
-    let session = WsSession {
-        user_id: claims.sub.to_string(),
+    let auth = session.read().await;
+    let ws_session = WsSession {
+        user_id: auth.user_id.to_string(),
         server: state.chat_server.clone(),
         last_heartbeat: Instant::now(),
     };
-    ws::start(session, &req, stream)
+    ws::start(ws_session, &req, stream)
 }

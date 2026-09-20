@@ -1,10 +1,11 @@
+use crate::config::Settings;
+use crate::kv::KvStore;
 use crate::mgk::{CreatePreference, GetAddress};
-use anyhow::Result;
-use moka::future::Cache;
+use anyhow::{Context, Result};
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use typed_eventbus::{Event, EventStream, Publishable};
 use validator::Validate;
 use viewset::{Entity, Repository};
@@ -14,9 +15,9 @@ fn gen_otp() -> u32 {
     rng.random_range(100000..999999)
 }
 
-/// Returns an alphanumeric nonce used as the pending-cache lookup key.
+/// Returns an alphanumeric nonce used as the pending-confirmation lookup key.
 /// This is separate from the OTP so that the user-facing 6-digit code
-/// carries no entropy about which cache slot to attack.
+/// carries no entropy about which slot to attack.
 fn gen_nonce() -> String {
     let mut rng = rand::rng();
     (0..16)
@@ -63,9 +64,10 @@ pub struct Token {
 // Pending entry
 // ---------------------------------------------------------------------------
 
-/// What we store in the pending cache while waiting for OTP confirmation.
+/// What we keep in Redis while waiting for OTP confirmation (JSON, with a TTL).
 /// All preferences in a batch share a single address, which is validated
 /// to be identical across entries before the batch is accepted.
+#[derive(Serialize, Deserialize)]
 struct PendingEntry {
     otp: u32,
     /// `(subject, address)` pairs — address is repeated per row so that
@@ -80,12 +82,12 @@ struct PendingEntry {
 #[derive(Clone)]
 pub struct Preferences<Repo: Repository> {
     db: Arc<Repo>,
-    /// (user, subject) -> address
-    cache: Cache<(String, String), String>,
-    /// nonce -> PendingEntry  (nonce is returned to the handler, not the user)
-    pending: Cache<String, Arc<PendingEntry>>,
+    /// Shared (Redis) store: pending OTPs and the (user, subject) -> address cache.
+    kv: Arc<dyn KvStore>,
     allowed_subjects: HashSet<String>,
-    table_name: String,
+    /// Channel name derived from the entity table ("email_preferences" -> "email").
+    channel: String,
+    settings: Settings,
     es: Arc<dyn EventStream>,
 }
 
@@ -98,23 +100,30 @@ where
         db: Arc<Repo>,
         es: Arc<dyn EventStream>,
         subjects: Vec<String>,
+        kv: Arc<dyn KvStore>,
+        settings: Settings,
     ) -> Result<Self> {
-        let table_name = format!(
-            "{}_preferences",
-            <<Repo as Repository>::Entity as Entity>::TABLE
-        );
+        let table = <<Repo as Repository>::Entity as Entity>::TABLE;
+        let channel = table
+            .strip_suffix("_preferences")
+            .unwrap_or(table)
+            .to_string();
         Ok(Self {
             db,
             es,
-            table_name,
-            cache: Cache::builder().max_capacity(1000).build(),
-            pending: Cache::builder()
-                .max_capacity(100)
-                // OTP tokens expire after 10 minutes.
-                .time_to_live(Duration::from_secs(300))
-                .build(),
+            kv,
+            channel,
+            settings,
             allowed_subjects: subjects.into_iter().collect(),
         })
+    }
+
+    fn pending_key(&self, user: &str, nonce: &str) -> String {
+        format!("pending:{}:{}:{}", self.channel, user, nonce)
+    }
+
+    fn cache_key(&self, user: &str, subject: &str) -> String {
+        format!("pref:{}:{}:{}", self.channel, user, subject)
     }
 
     // -----------------------------------------------------------------------
@@ -152,12 +161,15 @@ where
             .map(|p| (p.subject, p.address))
             .collect();
 
-        self.pending
-            .insert(
-                format!("{}:{}", user, nonce),
-                Arc::new(PendingEntry { otp, items }),
+        let json = serde_json::to_string(&PendingEntry { otp, items })?;
+        self.kv
+            .set(
+                &self.pending_key(user, &nonce),
+                &json,
+                self.settings.otp_ttl,
             )
-            .await;
+            .await
+            .context("could not store pending confirmation")?;
 
         Ok((nonce, otp))
     }
@@ -170,30 +182,57 @@ where
             return Err(anyhow::anyhow!("invalid token: {e}"));
         }
 
-        let key = format!("{}:{}", user, nonce);
-        let entry = match self.pending.get(&key).await {
-            Some(e) => e,
-            None => return Err(anyhow::anyhow!("Token not found or expired")),
-        };
+        let key = self.pending_key(user, nonce);
+        let raw = self
+            .kv
+            .get(&key)
+            .await
+            .context("could not read pending confirmation")?
+            .ok_or_else(|| anyhow::anyhow!("Token not found or expired"))?;
+        let entry: PendingEntry =
+            serde_json::from_str(&raw).context("corrupt pending confirmation")?;
 
         if entry.otp != otp.token {
             return Err(anyhow::anyhow!("Token not found or expired"));
         }
 
-        // Remove the entry now that it has been consumed.
-        self.pending.remove(&key).await;
+        // Consume the entry now that it has been verified.
+        self.kv
+            .delete(&key)
+            .await
+            .context("could not consume pending confirmation")?;
+
+        // (user_id, subject) is unique, so setting an address again replaces the
+        // previous one rather than adding a second row.
+        let upsert = format!(
+            "INSERT INTO {} (subject, address, user_id) VALUES ($1, $2, $3) \
+             ON CONFLICT (user_id, subject) DO UPDATE SET address = EXCLUDED.address",
+            <<Repo as Repository>::Entity as Entity>::TABLE
+        );
 
         for (subject, address) in &entry.items {
-            let pref = CreatePreference::new(user.into(), subject.into(), address.into());
-            self.db.create(pref.into()).await?;
+            sqlx::query(sqlx::AssertSqlSafe(upsert.clone()))
+                .bind(subject.as_str())
+                .bind(address.as_str())
+                .bind(user)
+                .execute(self.db.database())
+                .await?;
 
-            self.cache
-                .insert((user.to_string(), subject.clone()), address.clone())
-                .await;
+            if let Err(e) = self
+                .kv
+                .set(
+                    &self.cache_key(user, subject),
+                    address,
+                    self.settings.cache_ttl,
+                )
+                .await
+            {
+                tracing::warn!(error = %e, user, subject, "Failed to refresh preference cache");
+            }
 
             let event = ChannelConfirmed {
                 user: user.to_string(),
-                channel: self.table_name.replace("_preferences", ""),
+                channel: self.channel.clone(),
                 address: address.clone(),
             };
 
@@ -208,31 +247,30 @@ where
     }
 
     // -----------------------------------------------------------------------
-    // get — cache-aside read
+    // get — cache-aside read (Redis, falling back to the database)
     // -----------------------------------------------------------------------
     pub async fn get(&self, user: &str, subject: &str) -> Result<Option<String>> {
-        let key = (user.to_string(), subject.to_string());
+        let key = self.cache_key(user, subject);
 
-        if let Some(cached) = self.cache.get(&key).await {
-            return Ok(Some(cached));
+        match self.kv.get(&key).await {
+            Ok(Some(cached)) => return Ok(Some(cached)),
+            Ok(None) => {}
+            // A cache outage must not stop delivery: fall through to the database.
+            Err(e) => tracing::warn!(error = %e, "Preference cache read failed, using database"),
         }
 
-        /*let result = sqlx::query_scalar::<_, String>(&format!(
-            "SELECT address FROM {} WHERE user = ? AND subject = ?",
-            self.table_name
-        ))
-        .bind(user)
-        .bind(subject)
-        .fetch_optional(&self.db)*/
-        let filters: HashMap<&str, String> =
-            vec![("user", user.to_string()), ("subject", subject.to_string())]
-                .into_iter()
-                .collect();
-        let result = self.db.list(&filters.into()).await?;
-        let (addresses, _count) = result;
-        if addresses.len() > 0 {
-            let address = addresses[0].get_address();
-            self.cache.insert(key, address.clone()).await;
+        let filters: HashMap<&str, String> = vec![
+            ("user_id", user.to_string()),
+            ("subject", subject.to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let (rows, _count) = self.db.list(&filters.into()).await?;
+        if let Some(first) = rows.first() {
+            let address = first.get_address();
+            if let Err(e) = self.kv.set(&key, &address, self.settings.cache_ttl).await {
+                tracing::warn!(error = %e, "Failed to populate preference cache");
+            }
             return Ok(Some(address));
         }
         Ok(None)

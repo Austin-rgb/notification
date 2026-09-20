@@ -25,3 +25,6 @@ target
 
 target/
 .cargo/
+
+# python cache files
+**/*.pyc

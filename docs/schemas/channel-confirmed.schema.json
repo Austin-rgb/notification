@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/notification/channel-confirmed.schema.json",
+  "title": "contact.channel.confirmed",
+  "description": "Published by the notification service after a user confirms an address with an OTP. One event is published per confirmed subject. Envelope: see event-envelope.schema.json.",
+  "type": "object",
+  "required": ["metadata", "payload"],
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "required": ["event_id", "event_version", "occurred_at", "producer", "audience"],
+      "properties": {
+        "producer": { "const": "mgk" },
+        "audience": { "type": "array", "maxItems": 0 }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "required": ["user", "channel", "address"],
+      "properties": {
+        "user": { "type": "string", "description": "Id (UUID string) of the user who confirmed." },
+        "channel": { "enum": ["email", "push", "console"] },
+        "address": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

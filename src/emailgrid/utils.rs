@@ -24,8 +24,15 @@ impl Builder {
 
     /// Build email
     pub async fn build(&self, subject: String, message: String) -> Result<String> {
-        // Parse JSON message
-        let data: Value = serde_json::from_str(&message)?;
+        // Parse JSON message. Tera contexts must be objects, so anything else
+        // (e.g. the bare OTP "123456" sent by /preferences/set) is exposed to the
+        // template as `{{ value }}`.
+        let data: Value = serde_json::from_str(&message).unwrap_or(Value::String(message));
+        let data = if data.is_object() {
+            data
+        } else {
+            serde_json::json!({ "value": data })
+        };
 
         // Prepare template name
         let template_name = format!("{}.html", subject);

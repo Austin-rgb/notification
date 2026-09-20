@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/notification/event-envelope.schema.json",
+  "title": "Event envelope",
+  "description": "Wire format of every event on the NATS event stream (typed-eventbus 0.2.1). Events consumed by the notification service must be published on a configured subject with this shape.",
+  "type": "object",
+  "required": ["metadata", "payload"],
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "required": ["event_id", "event_version", "occurred_at", "audience"],
+      "properties": {
+        "event_id": { "type": "string", "format": "uuid" },
+        "event_version": { "type": "string", "examples": ["v1"] },
+        "occurred_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC 3339 timestamp, e.g. 2026-09-19T06:00:00.123456Z"
+        },
+        "producer": { "type": ["string", "null"] },
+        "correlation_id": { "type": ["string", "null"], "format": "uuid" },
+        "trace_id": { "type": ["string", "null"], "format": "uuid" },
+        "user_id": { "type": ["string", "null"], "format": "uuid" },
+        "session_id": { "type": ["string", "null"], "format": "uuid" },
+        "audience": {
+          "type": "array",
+          "description": "Who to notify. Each entry is externally tagged: {\"Uuid\": \"<user id>\"} or {\"Tag\": \"<tag name>\"}.",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["Uuid"],
+                "properties": { "Uuid": { "type": "string", "format": "uuid" } },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["Tag"],
+                "properties": { "Tag": { "type": "string", "minLength": 1 } },
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    "payload": {
+      "description": "Subject-specific body. Opaque to the notification service; forwarded to channels and exposed to email templates as `payload`."
+    }
+  }
+}

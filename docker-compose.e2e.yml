@@ -1,0 +1,96 @@
+# End-to-end stack. It runs the real release image built from ./Dockerfile
+# against real PostgreSQL, Redis and NATS servers, with real migrations.
+# The only stand-in is the third-party email API (Brevo), replaced by
+# tests/e2e/mock_brevo.py; the service's own code path is unchanged, only
+# BREVO_API_URL differs.
+#
+# Keep the image tags below aligned with the versions you run in production.
+name: notification-e2e
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: notification
+      POSTGRES_PASSWORD: notification
+      POSTGRES_DB: notification
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notification -d notification"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-m", "8222"]
+    ports:
+      - "14222:4222"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8222/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  mock-brevo:
+    image: python:3.12-alpine
+    command: ["python", "/srv/mock_brevo.py"]
+    environment:
+      PORT: "8025"
+      EXPECTED_API_KEY: e2e-brevo-key
+    volumes:
+      - ./tests/e2e/mock_brevo.py:/srv/mock_brevo.py:ro
+    ports:
+      - "18025:8025"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8025/_health')"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  notification:
+    build:
+      context: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      mock-brevo:
+        condition: service_healthy
+    environment:
+      RUST_LOG: info
+      BIND_ADDR: 0.0.0.0:8080
+      API_PREFIX: /notifications
+      DATABASE_URL: postgres://notification:notification@postgres:5432/notification
+      REDIS_URL: redis://redis:6379
+      NATS_URL: nats://nats:4222
+      JWT_SECRET: e2e-secret-e2e-secret-e2e-secret-0123456789
+      JWT_ISSUER: notification-e2e
+      EMAIL_SUBJECTS: order.shipped
+      PUSH_SUBJECTS: chat.message,order.shipped
+      CONSOLE_SUBJECTS: debug.event
+      EMAIL_PROVIDER: brevo
+      BREVO_API_KEY: e2e-brevo-key
+      BREVO_API_URL: http://mock-brevo:8025/v3/smtp/email
+      EMAIL_FROM_ADDRESS: no-reply@notifications.test
+      EMAIL_FROM_NAME: Notifications E2E
+    volumes:
+      # Test-only template, mounted next to the real ones shipped in the image.
+      - ./tests/e2e/templates/order.shipped.html:/app/templates/order.shipped.html:ro
+    ports:
+      - "18080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/readyz"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
