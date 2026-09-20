@@ -27,4 +27,4 @@ target/
 .cargo/
 
 # python cache files
-**/*.pyc
+tests/e2e/__pycache__/
