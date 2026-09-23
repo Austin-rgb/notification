@@ -18,8 +18,7 @@ path = "src/main.rs"
 actix = "0.13.5"
 actix-web = "4.13.0"
 actix-web-actors = "4.3.1"
-# `jwt` enables `Jwt<T>` (the auth extractor) and `HS256Signer`.
-actixutils = { version = "0.6.7", features = ["jwt"] }
+actixutils = "0.6.8"
 anyhow = "1.0.103"
 async-trait = "0.1.89"
 rand = "0.10.2"
@@ -34,7 +33,7 @@ tera = "1.20.1"
 tokio = { version = "1", features = ["rt", "time", "sync"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-typed-eventbus = "0.2.1"
+typed-eventbus = "0.4"
 uuid = { version = "1.23.1", features = ["v4", "serde"] }
 validator = { version = "0.21.0", features = ["derive"] }
 viewset = "0.4"

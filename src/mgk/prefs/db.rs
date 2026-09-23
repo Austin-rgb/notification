@@ -6,7 +6,7 @@ use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use typed_eventbus::{Event, EventStream, Publishable};
+use typed_eventbus::{Event, EventStream, EventType};
 use validator::Validate;
 use viewset::{Entity, Repository};
 
@@ -281,13 +281,13 @@ where
 // Events
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct ChannelConfirmed {
     user: String,
     channel: String,
     address: String,
 }
 
-impl Publishable for ChannelConfirmed {
+impl EventType for ChannelConfirmed {
     const SUBJECT: &'static str = "contact.channel.confirmed";
 }

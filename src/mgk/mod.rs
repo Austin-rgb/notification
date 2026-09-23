@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::{Value, from_str, from_value};
 use std::sync::Arc;
 use typed_eventbus::EventMetaData;
-use typed_eventbus::{EventStream, Handler, Identifier};
+use typed_eventbus::{EventError, EventStream, Handler, Identifier};
 use uuid::Uuid;
 mod prefs;
 use crate::config::Settings;
@@ -74,26 +74,26 @@ where
     <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
     <Repo as Repository>::Entity: GetAddress,
 {
-    async fn handle(&self, subject: String, message: Vec<u8>) {
+    async fn handle(&self, subject: String, message: Vec<u8>) -> Result<(), EventError> {
         let message = match String::from_utf8(message) {
             Ok(s) => s,
             Err(e) => {
                 tracing::error!(error = %e, "Received non-UTF-8 message on event stream");
-                return;
+                return Ok(());
             }
         };
         let emd: Value = match from_str(&message) {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!(error = %e, "Could not parse event JSON");
-                return;
+                return Ok(());
             }
         };
         let event: EventMetaData = match from_value(emd["metadata"].clone()) {
             Ok(r) => r,
             Err(e) => {
                 tracing::error!(error = %e, "Could not deserialize EventMetaData");
-                return;
+                return Ok(());
             }
         };
         for id in event.audience {
@@ -122,6 +122,7 @@ where
                 tracing::error!(error = %e, user = %user_id, subject, "Sender failed to deliver notification");
             }
         }
+        Ok(())
     }
 }
 
