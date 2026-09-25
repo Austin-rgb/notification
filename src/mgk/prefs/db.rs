@@ -4,7 +4,7 @@ use actixutils::locals::CacheFactory;
 use actixutils::{Store, filters};
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use typed_eventbus::{Event, EventStream, EventType};

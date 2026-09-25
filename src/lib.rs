@@ -34,7 +34,6 @@ mod mgk;
 mod push;
 mod tagging;
 
-use actixutils::Store as KvStore;
 use actixutils::locals::CacheFactory;
 use config::{Settings, Subjects};
 

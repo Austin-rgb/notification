@@ -15,7 +15,6 @@ use actixutils::Store as KvStore;
 use actixutils::locals::CacheFactory;
 use actixutils::middleware::RequiredSession;
 use infra::Infrastructure as Infra;
-use sqlx::PgPool;
 use std::sync::Arc;
 use typed_eventbus::NatsEventStream;
 use uuid::Uuid;
