@@ -12,7 +12,6 @@
 //! * [`Module`]    – the notification module: channels, preferences, tags, push
 
 use actix_web::{web, web::ServiceConfig};
-use anyhow::Result;
 use emailgrid::EmailingContext;
 use mgk::{CreatePreference, GetAddress, IdResolver, Module as Mgk, Sender};
 use push::{Config, NotificationRequest};
@@ -26,8 +25,8 @@ use viewset::{DefaultRepo, Entity, ViewSet};
 pub mod app;
 pub mod config;
 pub mod emailgrid;
-pub mod infra;
-pub mod kv;
+//pub mod infra;
+//pub mod kv;
 pub mod session;
 pub mod telemetry;
 
@@ -35,12 +34,15 @@ mod mgk;
 mod push;
 mod tagging;
 
+use actixutils::Store as KvStore;
+use actixutils::locals::CacheFactory;
 use config::{Settings, Subjects};
-use kv::KvStore;
 
 struct Push(Config);
 struct Console;
 struct Email(EmailingContext);
+
+pub type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 // NOTE on the `user_id` field below: it is deliberately not called `user`.
 // `user` is a reserved word in PostgreSQL and viewset's generated SQL does not
@@ -161,8 +163,9 @@ impl Sender for Email {
             Ok(resp) => Err(anyhow::anyhow!(
                 "email provider responded with status {}",
                 resp.status()
-            )),
-            Err(e) => Err(anyhow::anyhow!("email provider request failed: {e}")),
+            )
+            .into()),
+            Err(e) => Err(anyhow::anyhow!("email provider request failed: {e}").into()),
         }
     }
 }
@@ -192,10 +195,10 @@ impl Module {
         pool: Pool<Postgres>,
         emailer: EmailingContext,
         es: Arc<dyn EventStream>,
-        kv: Arc<dyn KvStore>,
+        kv: impl CacheFactory + Clone,
         subjects: &Subjects,
         settings: Settings,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self> {
         let idres = Arc::new(MyIdResolver::new(pool.clone()));
         let repo: ConsoleRepo = pool.clone().into();
         let console = Mgk::new(

@@ -254,6 +254,7 @@ dependencies = [
  "ipnet",
  "moka",
  "rand 0.10.2",
+ "redis",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -1789,6 +1790,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "infra"
+version = "0.1.0"
+dependencies = [
+ "async-nats",
+ "redis",
+ "serde",
+ "sqlx",
+ "tokio",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2127,6 +2139,7 @@ dependencies = [
  "actixutils",
  "anyhow",
  "async-trait",
+ "infra",
  "rand 0.10.2",
  "redis",
  "reqwest",

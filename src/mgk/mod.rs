@@ -8,8 +8,9 @@ use typed_eventbus::{EventError, EventStream, Handler, Identifier};
 use uuid::Uuid;
 mod prefs;
 use crate::config::Settings;
-use crate::kv::KvStore;
-use crate::mgk::prefs::db::Preferences;
+use crate::mgk::prefs::db::{Preferences, Result};
+use actixutils::Store as KvStore;
+use actixutils::locals::CacheFactory;
 use serde::{Deserialize, Serialize};
 use viewset::{Entity, Repository};
 
@@ -40,17 +41,12 @@ impl CreatePreference {
 /// than silently dropping notifications.
 #[async_trait::async_trait]
 pub trait Sender: Send + Sync {
-    async fn send(
-        &self,
-        address: String,
-        subject: String,
-        message: String,
-    ) -> Result<(), anyhow::Error>;
+    async fn send(&self, address: String, subject: String, message: String) -> Result<()>;
 }
 
 #[async_trait::async_trait]
 pub trait IdResolver: Send + Sync {
-    async fn resolve(&self, identifier: Identifier) -> anyhow::Result<Uuid>;
+    async fn resolve(&self, identifier: Identifier) -> Result<Uuid>;
 }
 
 #[derive(Clone)]
@@ -74,7 +70,11 @@ where
     <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
     <Repo as Repository>::Entity: GetAddress,
 {
-    async fn handle(&self, subject: String, message: Vec<u8>) -> Result<(), EventError> {
+    async fn handle(
+        &self,
+        subject: String,
+        message: Vec<u8>,
+    ) -> core::result::Result<(), EventError> {
         let message = match String::from_utf8(message) {
             Ok(s) => s,
             Err(e) => {
@@ -137,9 +137,9 @@ where
         sender: Arc<dyn Sender>,
         id_resolver: Arc<dyn IdResolver>,
         subjects: Vec<String>,
-        kv: Arc<dyn KvStore>,
+        kv: impl CacheFactory,
         settings: Settings,
-    ) -> Result<Self, anyhow::Error> {
+    ) -> Result<Self> {
         let state = Arc::new(
             Preferences::new(pool.clone(), es.clone(), subjects.clone(), kv, settings).await?,
         );

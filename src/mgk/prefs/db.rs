@@ -1,14 +1,17 @@
 use crate::config::Settings;
-use crate::kv::KvStore;
 use crate::mgk::{CreatePreference, GetAddress};
-use anyhow::{Context, Result};
+use actixutils::locals::CacheFactory;
+use actixutils::{Store, filters};
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Duration;
 use typed_eventbus::{Event, EventStream, EventType};
 use validator::Validate;
 use viewset::{Entity, Repository};
+
+pub type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 fn gen_otp() -> u32 {
     let mut rng = rand::rng();
@@ -67,7 +70,7 @@ pub struct Token {
 /// What we keep in Redis while waiting for OTP confirmation (JSON, with a TTL).
 /// All preferences in a batch share a single address, which is validated
 /// to be identical across entries before the batch is accepted.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct PendingEntry {
     otp: u32,
     /// `(subject, address)` pairs — address is repeated per row so that
@@ -83,7 +86,7 @@ struct PendingEntry {
 pub struct Preferences<Repo: Repository> {
     db: Arc<Repo>,
     /// Shared (Redis) store: pending OTPs and the (user, subject) -> address cache.
-    kv: Arc<dyn KvStore>,
+    kv: Arc<dyn Store<(String, String), PendingEntry>>,
     allowed_subjects: HashSet<String>,
     /// Channel name derived from the entity table ("email_preferences" -> "email").
     channel: String,
@@ -100,7 +103,7 @@ where
         db: Arc<Repo>,
         es: Arc<dyn EventStream>,
         subjects: Vec<String>,
-        kv: Arc<dyn KvStore>,
+        kv: impl CacheFactory,
         settings: Settings,
     ) -> Result<Self> {
         let table = <<Repo as Repository>::Entity as Entity>::TABLE;
@@ -108,6 +111,7 @@ where
             .strip_suffix("_preferences")
             .unwrap_or(table)
             .to_string();
+        let kv = kv.new_cache(&channel, Duration::from_mins(30));
         Ok(Self {
             db,
             es,
@@ -116,10 +120,6 @@ where
             settings,
             allowed_subjects: subjects.into_iter().collect(),
         })
-    }
-
-    fn pending_key(&self, user: &str, nonce: &str) -> String {
-        format!("pending:{}:{}:{}", self.channel, user, nonce)
     }
 
     fn cache_key(&self, user: &str, subject: &str) -> String {
@@ -136,7 +136,7 @@ where
     // -----------------------------------------------------------------------
     pub async fn set(&self, user: &str, batch: PreferenceBatch) -> Result<(String, u32)> {
         if let Err(e) = batch.validate() {
-            return Err(anyhow::anyhow!("Invalid data: {e}"));
+            return Err(anyhow::anyhow!("Invalid data: {e}").into());
         }
 
         // All preferences must share the same address.
@@ -145,10 +145,11 @@ where
             if &pref.address != address {
                 return Err(anyhow::anyhow!(
                     "All preferences in a batch must share the same address"
-                ));
+                )
+                .into());
             }
             if !self.allowed_subjects.contains(&pref.subject) {
-                return Err(anyhow::anyhow!("Subject not allowed: {}", pref.subject));
+                return Err(anyhow::anyhow!("Subject not allowed: {}", pref.subject).into());
             }
         }
 
@@ -161,16 +162,10 @@ where
             .map(|p| (p.subject, p.address))
             .collect();
 
-        let json = serde_json::to_string(&PendingEntry { otp, items })?;
+        let json = PendingEntry { otp, items };
         self.kv
-            .set(
-                &self.pending_key(user, &nonce),
-                &json,
-                self.settings.otp_ttl,
-            )
-            .await
-            .context("could not store pending confirmation")?;
-
+            .set(&(user.to_string(), nonce.clone()), json)
+            .await?;
         Ok((nonce, otp))
     }
 
@@ -179,28 +174,21 @@ where
     // -----------------------------------------------------------------------
     pub async fn confirm(&self, user: &str, nonce: &str, otp: &Token) -> Result<()> {
         if let Err(e) = otp.validate() {
-            return Err(anyhow::anyhow!("invalid token: {e}"));
+            return Err(anyhow::anyhow!("invalid token: {e}").into());
         }
 
-        let key = self.pending_key(user, nonce);
-        let raw = self
-            .kv
-            .get(&key)
-            .await
-            .context("could not read pending confirmation")?
-            .ok_or_else(|| anyhow::anyhow!("Token not found or expired"))?;
-        let entry: PendingEntry =
-            serde_json::from_str(&raw).context("corrupt pending confirmation")?;
+        let key = (user.to_string(), nonce.to_string());
+        let entry = match self.kv.get(&key).await? {
+            Some(r) => r,
+            None => return Err(anyhow::anyhow!("no pending entry").into()),
+        };
 
         if entry.otp != otp.token {
-            return Err(anyhow::anyhow!("Token not found or expired"));
+            return Err(anyhow::anyhow!("Token not found or expired").into());
         }
 
         // Consume the entry now that it has been verified.
-        self.kv
-            .delete(&key)
-            .await
-            .context("could not consume pending confirmation")?;
+        self.kv.delete(&key).await?;
 
         // (user_id, subject) is unique, so setting an address again replaces the
         // previous one rather than adding a second row.
@@ -217,18 +205,6 @@ where
                 .bind(user)
                 .execute(self.db.database())
                 .await?;
-
-            if let Err(e) = self
-                .kv
-                .set(
-                    &self.cache_key(user, subject),
-                    address,
-                    self.settings.cache_ttl,
-                )
-                .await
-            {
-                tracing::warn!(error = %e, user, subject, "Failed to refresh preference cache");
-            }
 
             let event = ChannelConfirmed {
                 user: user.to_string(),
@@ -250,27 +226,12 @@ where
     // get — cache-aside read (Redis, falling back to the database)
     // -----------------------------------------------------------------------
     pub async fn get(&self, user: &str, subject: &str) -> Result<Option<String>> {
-        let key = self.cache_key(user, subject);
-
-        match self.kv.get(&key).await {
-            Ok(Some(cached)) => return Ok(Some(cached)),
-            Ok(None) => {}
-            // A cache outage must not stop delivery: fall through to the database.
-            Err(e) => tracing::warn!(error = %e, "Preference cache read failed, using database"),
-        }
-
-        let filters: HashMap<&str, String> = vec![
-            ("user_id", user.to_string()),
-            ("subject", subject.to_string()),
-        ]
-        .into_iter()
-        .collect();
-        let (rows, _count) = self.db.list(&filters.into()).await?;
+        let (rows, _count) = self
+            .db
+            .list(filters!("user_id"=>user.to_string(),"subject"=>subject.to_string()))
+            .await?;
         if let Some(first) = rows.first() {
             let address = first.get_address();
-            if let Err(e) = self.kv.set(&key, &address, self.settings.cache_ttl).await {
-                tracing::warn!(error = %e, "Failed to populate preference cache");
-            }
             return Ok(Some(address));
         }
         Ok(None)
