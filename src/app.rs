@@ -11,12 +11,11 @@ use crate::emailgrid::{Brevo, EmailAddress, EmailingContext, Resend, Sender as E
 use crate::session::AuthSession;
 use actix_web::middleware::Logger;
 use actix_web::{HttpResponse, HttpServer, web};
-use actixutils::Store as KvStore;
-use actixutils::locals::CacheFactory;
 use actixutils::middleware::RequiredSession;
-use infra::Infrastructure as Infra;
+use ferrumec::Infra;
+use ferrumec::Store as KvStore;
+use ferrumec::cache::CacheFactory;
 use std::sync::Arc;
-use typed_eventbus::NatsEventStream;
 use uuid::Uuid;
 
 pub type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -29,16 +28,16 @@ pub struct NotificationService {
 
 impl NotificationService {
     /// Wire the module (channels, preferences, push, tags) onto the connected infrastructure.
-    pub async fn build(cfg: &AppConfig, infra: Infra) -> Result<Self> {
+    pub async fn build(cfg: &AppConfig, infra: impl Infra) -> Result<Self> {
         //let Infra { pool, kv, events } = infra;
 
-        let session_store = infra.redis.new_cache("session:", cfg.session_ttl);
+        let session_store = infra.cache_factory().new_cache("session:", cfg.session_ttl);
 
         let module = Module::new(
-            infra.postgres.clone(),
+            infra.database(),
             build_emailer(cfg)?,
-            Arc::new(NatsEventStream::from_client(infra.nats).expect("could not connect to nats")),
-            infra.redis.clone(),
+            infra.event_stream(),
+            infra.cache_factory(),
             &cfg.subjects,
             cfg.settings.clone(),
         )

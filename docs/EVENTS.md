@@ -110,9 +110,9 @@ It does not say *which subject* was confirmed (one event per subject, identical 
 ```rust
 #[derive(serde::Serialize)]
 struct OrderShipped { order_id: String }
-impl typed_eventbus::Publishable for OrderShipped { const SUBJECT: &'static str = "order.shipped"; }
+impl ferrumec::event::Publishable for OrderShipped { const SUBJECT: &'static str = "order.shipped"; }
 
-typed_eventbus::Event::new(OrderShipped { order_id: "ORD-1001".into() })
+ferrumec::event::Event::new(OrderShipped { order_id: "ORD-1001".into() })
     .with_producer("orders")
     .with_audience(vec![user_id])            // Uuid, or Identifier::Tag(..)
     .publish(bus.clone()).await?;

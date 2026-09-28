@@ -13,12 +13,12 @@
 
 use actix_web::{web, web::ServiceConfig};
 use emailgrid::EmailingContext;
+use ferrumec::event::{EventStream, Identifier};
 use mgk::{CreatePreference, GetAddress, IdResolver, Module as Mgk, Sender};
 use push::{Config, NotificationRequest};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool, Pool, Postgres};
 use std::sync::Arc;
-use typed_eventbus::{EventStream, Identifier};
 use uuid::Uuid;
 use viewset::{DefaultRepo, Entity, ViewSet};
 
@@ -34,8 +34,8 @@ mod mgk;
 mod push;
 mod tagging;
 
-use actixutils::locals::CacheFactory;
 use config::{Settings, Subjects};
+use ferrumec::cache::CacheFactory;
 
 struct Push(Config);
 struct Console;
