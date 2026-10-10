@@ -1,119 +1,50 @@
-//! Application assembly: turns validated config + connected infrastructure
-//! into a running HTTP service.
+//! A plain HTTP server for a set of [`ferrumec::Module`]s.
 //!
 //! ```text
-//! AppConfig::from_env() ──► Infra::connect(&cfg) ──► NotificationService::build ──► .serve()
+//! AppConfig::from_env() ──► modules!(infra; ("notifications", Module)) ──► serve()
 //! ```
+//!
+//! This is the standalone counterpart of `ferrumec::launch::launch`: it does
+//! the same job (mount every module under its namespace, expose the infra
+//! health check) without the global permission middleware or OpenTelemetry
+//! bootstrap, so the notification service can run on its own. Each module still
+//! guards its own routes (here: [`actixutils::middleware::RequiredSession`]).
 
-use crate::Module;
-use crate::config::{AppConfig, EmailProvider};
-use crate::emailgrid::{Brevo, EmailAddress, EmailingContext, Resend, Sender as EmailSender};
-use crate::session::AuthSession;
+use crate::config::AppConfig;
 use actix_web::middleware::Logger;
-use actix_web::{HttpResponse, HttpServer, web};
-use actixutils::middleware::RequiredSession;
-use ferrumec::Infra;
-use ferrumec::Store as KvStore;
-use ferrumec::cache::CacheFactory;
+use actix_web::{App, HttpServer};
+use ferrumec::{Infra, Module};
 use std::sync::Arc;
-use uuid::Uuid;
 
 pub type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
-pub struct NotificationService {
-    cfg: AppConfig,
-    module: Module,
-    session_store: Arc<dyn KvStore<Uuid, AuthSession>>,
-}
+/// Bind and run until SIGINT/SIGTERM (actix drains in-flight requests).
+///
+/// Every `(namespace, module)` pair is mounted with [`Module::configure`] on
+/// each worker, and `GET /healthz` reports the infrastructure status
+/// (Postgres / Redis / NATS latencies, 503 when one is down).
+pub async fn serve(
+    cfg: &AppConfig,
+    modules: Vec<(&'static str, Arc<dyn Module>)>,
+    infra: impl Infra,
+) -> Result<()> {
+    let bind_addr = cfg.bind_addr.clone();
+    let modules = Arc::new(modules);
 
-impl NotificationService {
-    /// Wire the module (channels, preferences, push, tags) onto the connected infrastructure.
-    pub async fn build(cfg: &AppConfig, infra: impl Infra) -> Result<Self> {
-        //let Infra { pool, kv, events } = infra;
-
-        let session_store = infra.cache_factory().new_cache("session:", cfg.session_ttl);
-
-        let module = Module::new(
-            infra.database(),
-            build_emailer(cfg)?,
-            infra.event_stream(),
-            infra.cache_factory(),
-            &cfg.subjects,
-            cfg.settings.clone(),
-        )
-        .await?;
-
-        Ok(Self {
-            cfg: cfg.clone(),
-            module,
-            session_store,
-        })
-    }
-
-    /// Register every route and its shared state. Reusable if you want to
-    /// mount the service inside a bigger actix `App`.
-    pub fn configure(&self, cfg: &mut web::ServiceConfig) {
-        let cookie_name = self.cfg.session_cookie.clone();
-        let session_store = self.session_store.clone();
-
-        cfg.route("/healthz", web::get().to(healthz))
-            // Authenticated API: session cookie required.
-            .service(
-                web::scope(&self.cfg.api_prefix)
-                    .wrap(
-                        RequiredSession::<AuthSession>::new(session_store).cookie_name(cookie_name),
-                    )
-                    .configure(|c| self.module.config(c, "")),
-            );
-    }
-
-    /// Bind and run until SIGINT/SIGTERM (actix drains in-flight requests).
-    pub async fn serve(self) -> Result<()> {
-        let bind_addr = self.cfg.bind_addr.clone();
-        let workers = self.cfg.workers;
-        let prefix = self.cfg.api_prefix.clone();
-        let service = Arc::new(self);
-
-        let mut server = HttpServer::new(move || {
-            let service = service.clone();
-            actix_web::App::new()
-                .wrap(Logger::default())
-                .configure(move |cfg| service.configure(cfg))
-        });
-        if let Some(n) = workers {
-            server = server.workers(n);
+    let mut server = HttpServer::new(move || {
+        let mut app = App::new().wrap(Logger::default());
+        for (namespace, module) in modules.iter() {
+            app = app.configure(|c| module.clone().configure(c, namespace));
         }
-        let server = server.shutdown_timeout(30).bind(&bind_addr)?;
-
-        tracing::info!(addr = %bind_addr, api_prefix = %prefix, "notification service listening");
-        server.run().await?;
-        tracing::info!("notification service stopped");
-        Ok(())
+        app.configure(|c| infra.configure(c, "/healthz"))
+    });
+    if let Some(n) = cfg.workers {
+        server = server.workers(n);
     }
-}
+    let server = server.shutdown_timeout(30).bind(&bind_addr)?;
 
-fn build_emailer(cfg: &AppConfig) -> Result<EmailingContext> {
-    let e = &cfg.email;
-    let sender: Arc<dyn EmailSender> = match e.provider {
-        EmailProvider::Brevo => Arc::new(Brevo::with_config(
-            e.api_key.expose().to_string(),
-            e.api_url.clone(),
-        )),
-        EmailProvider::Resend => Arc::new(Resend::with_config(
-            e.api_key.expose().to_string(),
-            e.api_url.clone(),
-        )),
-    };
-    Ok(EmailingContext::new(
-        sender,
-        EmailAddress {
-            email: e.from_address.clone(),
-            name: e.from_name.clone(),
-        },
-    )?)
-}
-
-/// Liveness: the process is up.
-async fn healthz() -> HttpResponse {
-    HttpResponse::Ok().json(serde_json::json!({ "status": "ok" }))
+    tracing::info!(addr = %bind_addr, "notification service listening");
+    server.run().await?;
+    tracing::info!("notification service stopped");
+    Ok(())
 }

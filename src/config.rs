@@ -4,6 +4,16 @@
 //! `std::env`, so a misconfigured deployment fails at startup with a message
 //! naming the offending variable instead of panicking later.
 //!
+//! Two configs, mirroring the two layers:
+//!
+//! * [`ModuleConfig`] – everything the [`crate::Module`] needs (channel subjects,
+//!   OTP/cache tunables, email provider, session settings). Read by
+//!   `ferrumec::Module::new`.
+//! * [`AppConfig`] – only the HTTP server around the modules (bind address,
+//!   workers). Postgres / Redis / NATS connections are owned by the
+//!   `ferrumec::Infra` implementation (`RemoteInfra::from_env` reads
+//!   `DATABASE_URL`, `REDIS_URL` and `NATS_URL`).
+//!
 //! See `README.md` for the full variable table.
 
 use anyhow::{Result, bail};
@@ -73,25 +83,20 @@ pub struct EmailConfig {
     pub from_name: String,
 }
 
+/// Server-level settings: where to listen and under which namespace the
+/// notification module is mounted.
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub bind_addr: String,
     pub workers: Option<usize>,
-    /// URL prefix the whole API is mounted under, e.g. `/notifications`.
-    pub api_prefix: String,
+    /// Namespace (URL prefix, no slashes) the notification module is
+    /// registered under, e.g. `notifications`.
+    pub namespace: String,
+}
 
-    pub database_url: Secret,
-    pub db_max_connections: u32,
-    pub run_migrations: bool,
-
-    pub redis_url: Secret,
-    pub redis_key_prefix: String,
-
-    pub nats_url: Secret,
-
-    /// Total time to keep retrying Postgres / Redis / NATS at boot.
-    pub startup_timeout: Duration,
-
+/// Everything [`crate::Module`] needs to build itself.
+#[derive(Debug, Clone)]
+pub struct ModuleConfig {
     /// How long a server-side session entry remains valid in Redis.
     pub session_ttl: Duration,
     /// Cookie name used for the session id (must match the auth service).
@@ -131,6 +136,29 @@ fn parse_subjects(key: &str, raw: &str) -> Result<Vec<String>> {
     Ok(items)
 }
 
+fn lookup_fns<'a, F>(
+    get: &'a F,
+) -> (
+    impl Fn(&str) -> Option<String> + 'a,
+    impl Fn(&str) -> Result<String> + 'a,
+)
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let optional = move |key: &str| -> Option<String> {
+        get(key)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+    let required = move |key: &str| -> Result<String> {
+        match optional(key) {
+            Some(v) => Ok(v),
+            None => bail!("{key} must be set"),
+        }
+    };
+    (optional, required)
+}
+
 impl AppConfig {
     /// Load from the process environment.
     pub fn from_env() -> Result<Self> {
@@ -142,28 +170,14 @@ impl AppConfig {
     where
         F: Fn(&str) -> Option<String>,
     {
-        let optional = |key: &str| -> Option<String> {
-            get(key)
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-        };
-        let required = |key: &str| -> Result<String> {
-            match optional(key) {
-                Some(v) => Ok(v),
-                None => bail!("{key} must be set"),
-            }
-        };
+        let (optional, _) = lookup_fns(&get);
 
-        let mut api_prefix = optional("API_PREFIX").unwrap_or_else(|| "/notifications".to_string());
-        if !api_prefix.starts_with('/') {
-            api_prefix.insert(0, '/');
-        }
-        while api_prefix.len() > 1 && api_prefix.ends_with('/') {
-            api_prefix.pop();
-        }
-        if api_prefix == "/" {
-            api_prefix.clear();
-        }
+        // `API_PREFIX` is still accepted (e.g. `/notifications/`); it is now the
+        // module namespace, stored without surrounding slashes.
+        let namespace = optional("API_PREFIX")
+            .unwrap_or_else(|| "notifications".to_string())
+            .trim_matches('/')
+            .to_string();
 
         let workers = match optional("WORKERS") {
             None => None,
@@ -175,6 +189,27 @@ impl AppConfig {
                 Some(n)
             }
         };
+
+        Ok(Self {
+            bind_addr: optional("BIND_ADDR").unwrap_or_else(|| "0.0.0.0:8080".to_string()),
+            workers,
+            namespace,
+        })
+    }
+}
+
+impl ModuleConfig {
+    /// Load from the process environment.
+    pub fn from_env() -> Result<Self> {
+        Self::from_lookup(|key| std::env::var(key).ok())
+    }
+
+    /// Load from any key/value source (handy for tests).
+    pub fn from_lookup<F>(get: F) -> Result<Self>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        let (optional, required) = lookup_fns(&get);
 
         let provider = match required("EMAIL_PROVIDER")?.to_ascii_lowercase().as_str() {
             "brevo" => EmailProvider::Brevo,
@@ -199,25 +234,6 @@ impl AppConfig {
         )?;
 
         Ok(Self {
-            bind_addr: optional("BIND_ADDR").unwrap_or_else(|| "0.0.0.0:8080".to_string()),
-            workers,
-            api_prefix,
-            database_url: Secret::new(required("DATABASE_URL")?),
-            db_max_connections: parse_or(
-                "DB_MAX_CONNECTIONS",
-                optional("DB_MAX_CONNECTIONS"),
-                10u32,
-            )?,
-            run_migrations: parse_or("RUN_MIGRATIONS", optional("RUN_MIGRATIONS"), true)?,
-            redis_url: Secret::new(required("REDIS_URL")?),
-            redis_key_prefix: optional("REDIS_KEY_PREFIX")
-                .unwrap_or_else(|| "notification:".to_string()),
-            nats_url: Secret::new(required("NATS_URL")?),
-            startup_timeout: Duration::from_secs(parse_or(
-                "STARTUP_TIMEOUT_SECS",
-                optional("STARTUP_TIMEOUT_SECS"),
-                60u64,
-            )?),
             session_ttl: Duration::from_secs(parse_or(
                 "SESSION_TTL_SECS",
                 optional("SESSION_TTL_SECS"),

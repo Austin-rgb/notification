@@ -2,31 +2,19 @@
 name = "notification"
 version = "0.1.0"
 edition = "2024"
-default-run = "notification"
-
-# The service is a library (all logic, reusable/embeddable) plus a thin binary
-# that only wires infrastructure and starts the HTTP server.
-[lib]
-name = "notification"
-path = "src/lib.rs"
-
-[[bin]]
-name = "notification"
-path = "src/main.rs"
 
 [dependencies]
 actix = "0.13.5"
 actix-web = "4.13.0"
 actix-web-actors = "4.3.1"
-actixutils = "0.7.0-b"
+actixutils = "0.8"
 anyhow = "1.0.103"
 async-trait = "0.1.89"
-ferrumec = { version = "0.1.1", features = ["distributed"] }
+ferrumec = { version = "0.4"}
 rand = "0.10.2"
 reqwest = { version = "0.13.4", features = ["json"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.151"
-# `migrate` + `macros` are needed for `sqlx::migrate!`; rustls for managed Postgres (TLS).
 sqlx = { version = "0.9", features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "uuid", "migrate", "macros"] }
 tera = "1.20.1"
 tokio = { version = "1", features = ["rt", "time", "sync"] }
@@ -34,4 +22,4 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1.23.1", features = ["v4", "serde"] }
 validator = { version = "0.21.0", features = ["derive"] }
-viewset = "0.4.3-b"
+viewset = "0.5.2"
