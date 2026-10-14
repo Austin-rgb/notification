@@ -32,7 +32,6 @@ pub mod app;
 pub mod config;
 pub mod emailgrid;
 pub mod session;
-pub mod telemetry;
 
 mod mgk;
 mod push;

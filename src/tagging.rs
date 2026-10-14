@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Pool, Postgres};
 use std::sync::Arc;
 use uuid::Uuid;
-use viewset::{DefaultRepo, DefaultService, DefaultViewSet, Entity};
+use viewset::{DefaultRepo, DefaultViewSet, Entity, web::DefaultService};
 
 #[derive(Entity, Serialize, Deserialize, Clone, FromRow)]
 #[entity(table = "notification_tags", create = "CreateTag")]
