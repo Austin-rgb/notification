@@ -13,15 +13,13 @@
 //!   development and tests.
 
 use actix_web::{web, web::ServiceConfig};
-use actixutils::middleware::RequiredSession;
 use config::ModuleConfig;
 use emailgrid::{Brevo, EmailAddress, EmailingContext, Resend, Sender as EmailSender};
 use ferrumec::event::{EventStream, Identifier};
-use ferrumec::{Infra, Module as FerrumecModule, Store as KvStore};
+use ferrumec::{Infra, Module as FerrumecModule};
 use mgk::{CreatePreference, GetAddress, IdResolver, Module as Mgk, Sender};
 use push::{Config, NotificationRequest};
 use serde::{Deserialize, Serialize};
-use session::AuthSession;
 use sqlx::{FromRow, PgPool, Pool, Postgres};
 use std::sync::Arc;
 use tagging::TagViewSet;
