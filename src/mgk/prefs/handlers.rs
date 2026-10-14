@@ -4,10 +4,8 @@ use crate::mgk::Sender;
 use crate::mgk::prefs::db::Preferences;
 use crate::mgk::prefs::db::{PreferenceBatch, Token};
 use crate::mgk::{CreatePreference, GetAddress};
-use crate::session::AuthSession;
 use actix_web::web;
 use actix_web::{HttpResponse, Responder};
-use actixutils::Session;
 use serde::{Deserialize, Serialize};
 use tracing::error;
 use viewset::{Entity, Repository};
@@ -45,7 +43,6 @@ where
     <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
     <Repo as Repository>::Entity: GetAddress,
 {
-    
     let user_id = session.sub.to_string();
     let batch = body.into_inner();
 
@@ -98,7 +95,6 @@ where
     <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
     <Repo as Repository>::Entity: GetAddress,
 {
-    
     let user_id = session.sub.to_string();
     let body = body.into_inner();
     let token = Token { token: body.token };
@@ -124,7 +120,6 @@ where
     <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
     <Repo as Repository>::Entity: GetAddress,
 {
-    
     let user_id = session.sub.to_string();
     match state.get(&user_id, &query.subject).await {
         Ok(Some(channel)) => HttpResponse::Ok().json(channel),

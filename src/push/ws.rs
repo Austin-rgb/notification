@@ -4,8 +4,6 @@ use actix::{
 use actix_web::{Error, HttpRequest, HttpResponse, get, web};
 use actix_web_actors::ws;
 
-use crate::session::AuthSession;
-use actixutils::Session;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -218,7 +216,7 @@ pub async fn ws_route(
     req: HttpRequest,
     stream: web::Payload,
     state: web::Data<Service>,
-    auth: web::ReqData<viewset::web::Identity>
+    auth: web::ReqData<viewset::web::Identity>,
 ) -> Result<HttpResponse, Error> {
     let ws_session = WsSession {
         user_id: auth.sub.to_string(),
