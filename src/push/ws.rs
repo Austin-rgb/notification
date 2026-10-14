@@ -218,11 +218,10 @@ pub async fn ws_route(
     req: HttpRequest,
     stream: web::Payload,
     state: web::Data<Service>,
-    session: Session<AuthSession>,
+    auth: web::ReqData<viewset::web::Identity>
 ) -> Result<HttpResponse, Error> {
-    let auth = session.read().await;
     let ws_session = WsSession {
-        user_id: auth.user_id.to_string(),
+        user_id: auth.sub.to_string(),
         server: state.chat_server.clone(),
         last_heartbeat: Instant::now(),
     };

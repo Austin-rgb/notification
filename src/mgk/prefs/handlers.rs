@@ -36,7 +36,7 @@ pub struct ConfirmBody {
 }
 
 pub async fn set_preference<Repo: Repository>(
-    session: Session<AuthSession>,
+    session: web::ReqData<viewset::web::Identity>,
     state: web::Data<Preferences<Repo>>,
     sender: web::Data<Arc<dyn Sender>>,
     body: web::Json<PreferenceBatch>,
@@ -45,8 +45,8 @@ where
     <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
     <Repo as Repository>::Entity: GetAddress,
 {
-    let session = session.read().await;
-    let user_id = session.user_id.to_string();
+    
+    let user_id = session.sub.to_string();
     let batch = body.into_inner();
 
     // Capture the address before we move the batch into `set`.
@@ -90,7 +90,7 @@ where
 }
 
 pub async fn confirm_preference<Repo: Repository>(
-    session: Session<AuthSession>,
+    session: web::ReqData<viewset::web::Identity>,
     state: web::Data<Preferences<Repo>>,
     body: web::Json<ConfirmBody>,
 ) -> impl Responder
@@ -98,8 +98,8 @@ where
     <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
     <Repo as Repository>::Entity: GetAddress,
 {
-    let session = session.read().await;
-    let user_id = session.user_id.to_string();
+    
+    let user_id = session.sub.to_string();
     let body = body.into_inner();
     let token = Token { token: body.token };
     match state.confirm(&user_id, &body.nonce, &token).await {
@@ -116,7 +116,7 @@ where
 }
 
 pub async fn get_preference<Repo: Repository>(
-    session: Session<AuthSession>,
+    session: web::ReqData<viewset::web::Identity>,
     state: web::Data<Preferences<Repo>>,
     query: web::Query<PreferenceGetQuery>,
 ) -> impl Responder
@@ -124,8 +124,8 @@ where
     <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
     <Repo as Repository>::Entity: GetAddress,
 {
-    let session = session.read().await;
-    let user_id = session.user_id.to_string();
+    
+    let user_id = session.sub.to_string();
     match state.get(&user_id, &query.subject).await {
         Ok(Some(channel)) => HttpResponse::Ok().json(channel),
         Ok(None) => HttpResponse::NotFound().finish(),
