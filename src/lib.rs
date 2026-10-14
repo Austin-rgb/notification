@@ -188,14 +188,14 @@ impl Sender for Console {
 ///
 /// Every route lives behind [`RequiredSession`]: the session cookie is resolved
 /// against the shared `session:` cache written by the auth service.
+use viewset::web::SessionMiddleware;
 pub struct NotificationModule {
     emailer: Mgk<EmailRepo>,
     push_mgk: Mgk<PushRepo>,
     push_: Config,
     console: Mgk<ConsoleRepo>,
     tags: TagViewSet,
-    session_store: Arc<dyn KvStore<Uuid, AuthSession>>,
-    session_cookie: String,
+    session: Arc<SessionMiddleware>,
 }
 
 /// The name this module is referred to by, matching the other services
@@ -218,7 +218,7 @@ impl NotificationModule {
         kv: impl CacheFactory,
         cfg: &ModuleConfig,
     ) -> Result<Self> {
-        let session_store = kv.new_cache("session:", cfg.session_ttl);
+        let session = Arc::new(SessionMiddleware::new(kv.clone()));
         let emailer = build_emailer(cfg)?;
         let subjects = &cfg.subjects;
         let settings = cfg.settings.clone();
@@ -268,8 +268,7 @@ impl NotificationModule {
             push_,
             console,
             tags: tagging::create_tag_viewset(pool, kv),
-            session_store,
-            session_cookie: cfg.session_cookie.clone(),
+            session,
         })
     }
 }
@@ -295,11 +294,9 @@ impl FerrumecModule for NotificationModule {
     /// * `ws/` – websocket push
     /// * `email|push|console/preferences/{set,confirm,get}`
     fn configure(self: Arc<Self>, cfg: &mut ServiceConfig, namespace: &str) {
-        let session = RequiredSession::<AuthSession>::new(self.session_store.clone())
-            .cookie_name(self.session_cookie.clone());
         cfg.service(
             web::scope(namespace)
-                .wrap(session)
+                .wrap(self.session.clone())
                 .configure(|cfg| self.tags.clone().configure(cfg, "tags"))
                 .configure(|cfg| self.push_.config(cfg, "/ws"))
                 .configure(|cfg| self.emailer.config(cfg, "/email"))
