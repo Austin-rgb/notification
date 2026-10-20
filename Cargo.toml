@@ -10,7 +10,7 @@ actix-web-actors = "4.3.1"
 actixutils = "0.8"
 anyhow = "1.0.103"
 async-trait = "0.1.89"
-ferrumec = { version = "0.4.1", features = ["web"] }
+ferrumec = { version = "0.4", features = ["web"] }
 rand = "0.10.2"
 reqwest = { version = "0.13.4", features = ["json"] }
 serde = { version = "1.0.228", features = ["derive"] }
@@ -20,4 +20,4 @@ tera = "1.20.1"
 tracing = "0.1.44"
 uuid = { version = "1.23.1", features = ["v4", "serde"] }
 validator = { version = "0.21.0", features = ["derive"] }
-viewset = { path = "../viewset", features = ["web"] }
+viewset = { version = "0.6.2", features = ["web"] }

@@ -207,6 +207,10 @@ where
                 .execute(self.db.database())
                 .await?;
 
+            if let Err(e) = self.db.list_cache().clear().await {
+                tracing::warn!(error = %e, "failed to invalidate preference list cache");
+            }
+
             let event = ChannelConfirmed {
                 user: user.to_string(),
                 channel: self.channel.clone(),
