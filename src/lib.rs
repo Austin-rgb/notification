@@ -275,7 +275,9 @@ fn build_emailer(cfg: &ModuleConfig) -> Result<EmailingContext> {
     let api_key = || -> Result<String> {
         match &e.api_key {
             Some(k) => Ok(k.expose().to_string()),
-            None => Err(anyhow::anyhow!("email provider {:?} requires an API key", e.provider).into()),
+            None => {
+                Err(anyhow::anyhow!("email provider {:?} requires an API key", e.provider).into())
+            }
         }
     };
     let sender: Arc<dyn EmailSender> = match e.provider {

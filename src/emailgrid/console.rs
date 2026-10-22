@@ -1,6 +1,6 @@
-use http::Response as HttpResponse;
 use super::emailing::{EmailPayload, SendResult, Sender};
 use async_trait::async_trait;
+use http::Response as HttpResponse;
 
 #[derive(Default, Clone, Copy)]
 pub struct Console;
@@ -22,7 +22,10 @@ impl Sender for Console {
             .join(", ");
 
         println!("================ EMAIL (console) ================");
-        println!("From:    {} <{}>", payload.sender.name, payload.sender.email);
+        println!(
+            "From:    {} <{}>",
+            payload.sender.name, payload.sender.email
+        );
         println!("To:      {to}");
         println!("Subject: {}", payload.subject);
 

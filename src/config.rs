@@ -230,7 +230,11 @@ impl ModuleConfig {
             EmailProvider::Gmail => {
                 // `emailgrid::Gmail::new` reads these itself; fail at startup
                 // with the variable name rather than later with a bare VarError.
-                for key in ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"] {
+                for key in [
+                    "GMAIL_CLIENT_ID",
+                    "GMAIL_CLIENT_SECRET",
+                    "GMAIL_REFRESH_TOKEN",
+                ] {
                     required(key)?;
                 }
                 None

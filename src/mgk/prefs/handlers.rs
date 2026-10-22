@@ -58,12 +58,9 @@ where
             // Log failures rather than silently swallowing them; the HTTP
             // response is still 200 because the pending entry was recorded
             // and the user may retry via /confirm within the TTL window.
+            let message = serde_json::json!({ "otp": otp }).to_string();
             let result = sender
-                .send(
-                    address.clone(),
-                    "confirm address".to_owned(),
-                    otp.to_string(),
-                )
+                .send(address.clone(), "confirm address".to_owned(), message)
                 .await;
             if let Err(e) = result {
                 error!(
