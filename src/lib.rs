@@ -14,7 +14,9 @@
 
 use actix_web::{web, web::ServiceConfig};
 use config::ModuleConfig;
-use emailgrid::{Brevo, EmailAddress, EmailingContext, Resend, Sender as EmailSender};
+use emailgrid::{
+    Brevo, Console, EmailAddress, EmailingContext, Gmail, Resend, Sender as EmailSender,
+};
 use ferrumec::event::{EventStream, Identifier};
 use ferrumec::{Infra, Module as FerrumecModule};
 use mgk::{CreatePreference, GetAddress, IdResolver, Module as Mgk, Sender};
@@ -38,7 +40,6 @@ mod tagging;
 use ferrumec::cache::CacheFactory;
 
 struct Push(Config);
-struct Console;
 struct Email(EmailingContext);
 
 pub type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -89,26 +90,6 @@ impl GetAddress for PushPreference {
 
 type PushRepo = DefaultRepo<PushPreference>;
 
-#[derive(Entity, Serialize, Deserialize, Clone, FromRow)]
-#[entity(table = "console_preferences", create = "CreatePreference")]
-struct ConsolePreference {
-    #[entity(skip_create)]
-    id: Uuid,
-    #[entity(filterable)]
-    pub subject: String,
-    pub address: String,
-    #[entity(filterable)]
-    pub user_id: String,
-}
-
-impl GetAddress for ConsolePreference {
-    fn get_address(&self) -> String {
-        self.address.clone()
-    }
-}
-
-type ConsoleRepo = DefaultRepo<ConsolePreference>;
-
 pub struct MyIdResolver {
     pool: PgPool,
 }
@@ -153,6 +134,14 @@ impl Sender for Push {
 #[async_trait::async_trait]
 impl Sender for Email {
     async fn send(&self, address: String, subject: String, message: String) -> Result<()> {
+        // The template builder needs a JSON object. Anything else (e.g. the bare
+        // OTP "123456" sent by /preferences/set) is exposed to the template as
+        // `{{ value }}`.
+        let message = match serde_json::from_str::<serde_json::Value>(&message) {
+            Ok(v) if v.is_object() => message,
+            Ok(v) => serde_json::json!({ "value": v }).to_string(),
+            Err(_) => serde_json::json!({ "value": message }).to_string(),
+        };
         // Template / build errors surface here...
         let response = self.0.send(address, subject, message).await?;
         // ...and so do transport errors and non-2xx answers from the provider, so
@@ -169,15 +158,7 @@ impl Sender for Email {
     }
 }
 
-#[async_trait::async_trait]
-impl Sender for Console {
-    async fn send(&self, address: String, subject: String, message: String) -> Result<()> {
-        println!("message sent: address = {address}, subject = {subject}, message = {message}");
-        Ok(())
-    }
-}
-
-/// The notification module: delivery channels (email, push, console), their
+/// The notification module: delivery channels (email, push), their
 /// preference endpoints, notification tags and the websocket push endpoint.
 ///
 /// Implements [`ferrumec::Module`], so it is built from any [`Infra`] (database
@@ -191,7 +172,6 @@ pub struct NotificationModule {
     emailer: Mgk<EmailRepo>,
     push_mgk: Mgk<PushRepo>,
     push_: Config,
-    console: Mgk<ConsoleRepo>,
     tags: TagViewSet,
     session: Arc<SessionMiddleware>,
 }
@@ -223,18 +203,6 @@ impl NotificationModule {
 
         let idres = Arc::new(MyIdResolver::new(pool.clone()));
 
-        let repo = ConsoleRepo::new(pool.clone(), kv.clone());
-        let console = Mgk::new(
-            Arc::new(repo),
-            es.clone(),
-            Arc::new(Console {}),
-            idres.clone(),
-            subjects.console.clone(),
-            kv.clone(),
-            settings.clone(),
-        )
-        .await?;
-
         let push_ = Config::new().await;
         let repo = PushRepo::new(pool.clone(), kv.clone());
         let push_mgk = Mgk::new(
@@ -264,7 +232,6 @@ impl NotificationModule {
             emailer: email,
             push_mgk,
             push_,
-            console,
             tags: tagging::create_tag_viewset(pool, kv),
             session,
         })
@@ -290,7 +257,7 @@ impl FerrumecModule for NotificationModule {
     ///
     /// * `tags` – notification tag CRUD
     /// * `ws/` – websocket push
-    /// * `email|push|console/preferences/{set,confirm,get}`
+    /// * `email|push/preferences/{set,confirm,get}`
     fn configure(self: Arc<Self>, cfg: &mut ServiceConfig, namespace: &str) {
         cfg.service(
             web::scope(namespace)
@@ -298,23 +265,26 @@ impl FerrumecModule for NotificationModule {
                 .configure(|cfg| self.tags.clone().configure(cfg, "tags"))
                 .configure(|cfg| self.push_.config(cfg, "/ws"))
                 .configure(|cfg| self.emailer.config(cfg, "/email"))
-                .configure(|cfg| self.push_mgk.config(cfg, "/push"))
-                .configure(|cfg| self.console.config(cfg, "/console")),
+                .configure(|cfg| self.push_mgk.config(cfg, "/push")),
         );
     }
 }
 
 fn build_emailer(cfg: &ModuleConfig) -> Result<EmailingContext> {
     let e = &cfg.email;
+    let api_key = || -> Result<String> {
+        match &e.api_key {
+            Some(k) => Ok(k.expose().to_string()),
+            None => Err(anyhow::anyhow!("email provider {:?} requires an API key", e.provider).into()),
+        }
+    };
     let sender: Arc<dyn EmailSender> = match e.provider {
-        config::EmailProvider::Brevo => Arc::new(Brevo::with_config(
-            e.api_key.expose().to_string(),
-            e.api_url.clone(),
-        )),
-        config::EmailProvider::Resend => Arc::new(Resend::with_config(
-            e.api_key.expose().to_string(),
-            e.api_url.clone(),
-        )),
+        config::EmailProvider::Brevo => Arc::new(Brevo(api_key()?)),
+        config::EmailProvider::Resend => Arc::new(Resend(api_key()?)),
+        // Reads GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET / GMAIL_REFRESH_TOKEN;
+        // `ModuleConfig::from_lookup` has already checked they are set.
+        config::EmailProvider::Gmail => Arc::new(Gmail::new()?),
+        config::EmailProvider::Console => Arc::new(Console::new()),
     };
     Ok(EmailingContext::new(
         sender,

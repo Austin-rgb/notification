@@ -46,7 +46,6 @@ impl fmt::Debug for Secret {
 pub struct Subjects {
     pub email: Vec<String>,
     pub push: Vec<String>,
-    pub console: Vec<String>,
 }
 
 /// Tunables for the preference / OTP flow.
@@ -71,14 +70,19 @@ impl Default for Settings {
 pub enum EmailProvider {
     Brevo,
     Resend,
+    /// Gmail API (OAuth2 refresh token). Needs `GMAIL_CLIENT_ID`,
+    /// `GMAIL_CLIENT_SECRET` and `GMAIL_REFRESH_TOKEN`.
+    Gmail,
+    /// Prints emails to stdout instead of sending them (development).
+    Console,
 }
 
 #[derive(Debug, Clone)]
 pub struct EmailConfig {
     pub provider: EmailProvider,
-    pub api_key: Secret,
-    /// Override the provider endpoint (used by the e2e suite to point at a stub).
-    pub api_url: Option<String>,
+    /// API key for providers that use one (Brevo, Resend); `None` for Gmail
+    /// (OAuth credentials) and Console.
+    pub api_key: Option<Secret>,
     pub from_address: String,
     pub from_name: String,
 }
@@ -214,11 +218,30 @@ impl ModuleConfig {
         let provider = match required("EMAIL_PROVIDER")?.to_ascii_lowercase().as_str() {
             "brevo" => EmailProvider::Brevo,
             "resend" => EmailProvider::Resend,
-            other => bail!("EMAIL_PROVIDER must be 'brevo' or 'resend', got {other:?}"),
+            "gmail" => EmailProvider::Gmail,
+            "console" => EmailProvider::Console,
+            other => bail!(
+                "EMAIL_PROVIDER must be 'brevo', 'resend', 'gmail' or 'console', got {other:?}"
+            ),
         };
-        let (key_var, url_var) = match provider {
-            EmailProvider::Brevo => ("BREVO_API_KEY", "BREVO_API_URL"),
-            EmailProvider::Resend => ("RESEND_API_KEY", "RESEND_API_URL"),
+        let api_key = match provider {
+            EmailProvider::Brevo => Some(Secret::new(required("BREVO_API_KEY")?)),
+            EmailProvider::Resend => Some(Secret::new(required("RESEND_API_KEY")?)),
+            EmailProvider::Gmail => {
+                // `emailgrid::Gmail::new` reads these itself; fail at startup
+                // with the variable name rather than later with a bare VarError.
+                for key in ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"] {
+                    required(key)?;
+                }
+                None
+            }
+            EmailProvider::Console => None,
+        };
+        let from_address = match provider {
+            EmailProvider::Console => {
+                optional("EMAIL_FROM_ADDRESS").unwrap_or_else(|| "noreply@localhost".to_string())
+            }
+            _ => required("EMAIL_FROM_ADDRESS")?,
         };
 
         let defaults = Settings::default();
@@ -243,7 +266,6 @@ impl ModuleConfig {
             subjects: Subjects {
                 email: parse_subjects("EMAIL_SUBJECTS", &required("EMAIL_SUBJECTS")?)?,
                 push: parse_subjects("PUSH_SUBJECTS", &required("PUSH_SUBJECTS")?)?,
-                console: parse_subjects("CONSOLE_SUBJECTS", &required("CONSOLE_SUBJECTS")?)?,
             },
             settings: Settings {
                 cache_ttl: Duration::from_secs(cache_ttl),
@@ -251,9 +273,8 @@ impl ModuleConfig {
             },
             email: EmailConfig {
                 provider,
-                api_key: Secret::new(required(key_var)?),
-                api_url: optional(url_var),
-                from_address: required("EMAIL_FROM_ADDRESS")?,
+                api_key,
+                from_address,
                 from_name: optional("EMAIL_FROM_NAME")
                     .unwrap_or_else(|| "Notifications".to_string()),
             },
