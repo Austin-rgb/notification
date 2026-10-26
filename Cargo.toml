@@ -7,7 +7,6 @@ edition = "2024"
 actix = "0.13.5"
 actix-web = "4.13.0"
 actix-web-actors = "4.3.1"
-actixutils = "0.8"
 anyhow = "1.0.103"
 async-trait = "0.1.89"
 ferrumec = { version = "0.4.6", features = ["web","pg"] }

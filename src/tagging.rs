@@ -6,12 +6,18 @@ use uuid::Uuid;
 use viewset::{DefaultRepo, DefaultViewSet, Entity, web::DefaultService};
 
 #[derive(Entity, Serialize, Deserialize, Clone, FromRow)]
-#[entity(table = "notification_tags", create = "CreateTag")]
+#[entity(table = "notification_tags", create = "CreateTag", update = "UpdateTag")]
 pub struct Tag {
-    #[entity(skip_create)]
+    #[entity(skip_create, skip_update)]
     pub id: Uuid,
+    #[entity(skip_update)]
     pub tag: String,
     pub user_id: Uuid,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct UpdateTag{
+    pub user_id: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize)]

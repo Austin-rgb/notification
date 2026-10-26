@@ -262,28 +262,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "actixutils"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddf21d07aa2cfa5f43e7b686a3baff5d530da9d968f3bdf994bae86f639a4628"
-dependencies = [
- "actix-web",
- "anyhow",
- "async-trait",
- "bytes",
- "chrono",
- "ferrumec",
- "futures",
- "futures-util",
- "ipnet",
- "rand 0.10.2",
- "serde",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1944,7 +1922,6 @@ dependencies = [
  "actix",
  "actix-web",
  "actix-web-actors",
- "actixutils",
  "anyhow",
  "async-trait",
  "base64 0.23.1",

@@ -9,7 +9,6 @@ use uuid::Uuid;
 mod prefs;
 use crate::config::Settings;
 use crate::mgk::prefs::db::{Preferences, Result};
-use ferrumec::Store as KvStore;
 use ferrumec::cache::CacheFactory;
 use serde::{Deserialize, Serialize};
 use viewset::{Entity, Repository};
