@@ -3564,8 +3564,9 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "viewset"
-version = "0.6.5-a"
-source = "git+https://github.com/Ferrumec/viewset#2f6e8d38f520da0fba02f762b76c45126a77ce0e"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "596f0b33fcef2599b59eac965932c859a13fdeadf1fce4849cd066e6cee8c149"
 dependencies = [
  "actix-web",
  "async-trait",
