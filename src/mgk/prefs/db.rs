@@ -92,6 +92,8 @@ pub struct Preferences<Repo: Repository> {
     /// Channel name derived from the entity table ("email_preferences" -> "email").
     channel: String,
     settings: Settings,
+    /// (user, subject) -> address. Read on every notification delivery.
+    addresses: Arc<dyn Store<(String, String), String>>,
     es: Arc<dyn EventStream>,
 }
 
@@ -104,7 +106,7 @@ where
         db: Arc<Repo>,
         es: Arc<dyn EventStream>,
         subjects: Vec<String>,
-        kv: impl CacheFactory,
+        cf: impl CacheFactory,
         settings: Settings,
     ) -> Result<Self> {
         let table = <<Repo as Repository>::Entity as Entity>::TABLE;
@@ -112,11 +114,13 @@ where
             .strip_suffix("_preferences")
             .unwrap_or(table)
             .to_string();
-        let kv = kv.new_cache(&channel, Duration::from_mins(30));
+        let kv = cf.new_cache(&channel, Duration::from_mins(30));
+        let addresses = cf.new_cache(&format!("{channel}_addresses"), settings.cache_ttl);
         Ok(Self {
             db,
             es,
             kv,
+            addresses,
             channel,
             settings,
             allowed_subjects: subjects.into_iter().collect(),
@@ -207,8 +211,9 @@ where
                 .execute(self.db.database())
                 .await?;
 
-            if let Err(e) = self.db.list_cache().clear().await {
-                tracing::warn!(error = %e, "failed to invalidate preference list cache");
+            let akey = (user.to_string(), subject.clone());
+            if let Err(e) = self.addresses.set(&akey, address.clone()).await {
+                tracing::warn!(error = %e, "failed to update address cache");
             }
 
             let event = ChannelConfirmed {
@@ -231,15 +236,25 @@ where
     // get — cache-aside read (Redis, falling back to the database)
     // -----------------------------------------------------------------------
     pub async fn get(&self, user: &str, subject: &str) -> Result<Option<String>> {
-        let (rows, _count) = self
-            .db
-            .list(filters!("user_id"=>user.to_string(),"subject"=>subject.to_string()))
-            .await?;
-        if let Some(first) = rows.first() {
-            let address = first.get_address();
-            return Ok(Some(address));
+        let key = (user.to_string(), subject.to_string());
+        if let Ok(Some(hit)) = self.addresses.get(&key).await {
+            return Ok(Some(hit));
         }
-        Ok(None)
+        let sql = format!(
+            "SELECT address FROM {} WHERE user_id = $1 AND subject = $2 LIMIT 1",
+            <<Repo as Repository>::Entity as Entity>::TABLE
+        );
+        let address = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql))
+            .bind(user)
+            .bind(subject)
+            .fetch_optional(self.db.database())
+            .await?;
+        if let Some(a) = &address {
+            if let Err(e) = self.addresses.set(&key, a.clone()).await {
+                tracing::warn!(error = %e, "failed to populate address cache");
+            }
+        }
+        Ok(address)
     }
 }
 
