@@ -9,7 +9,7 @@ actix-web = "4.13.0"
 actix-web-actors = "4.3.1"
 anyhow = "1.0.103"
 async-trait = "0.1.89"
-ferrumec = { version = "0.4.6", features = ["web","pg"] }
+ferrumec = { version = "0.5", features = ["web","pg"] }
 rand = "0.10.2"
 base64 = "0.23.1"
 http = "1.5.0"
@@ -22,4 +22,4 @@ tokio = { version = "1.54.1", features = ["fs", "sync"] }
 tracing = "0.1.44"
 uuid = { version = "1.23.1", features = ["v4", "serde"] }
 validator = { version = "0.21.0", features = ["derive"] }
-viewset = { version = "0.6.5", features = ["web"] }
+viewset = { version = "0.6.6", features = ["web"] }
