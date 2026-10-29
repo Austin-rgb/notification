@@ -232,6 +232,7 @@ impl NotificationModule {
 
         let in_app = in_app::InApp::new(
             pool.clone(),
+            kv.clone(),
             es.clone(),
             idres.clone(),
             subjects.in_app.clone(),
