@@ -14,19 +14,19 @@
 
 use actix_web::{web, web::ServiceConfig};
 use config::ModuleConfig;
-use emailgrid::{
-    Brevo, Console, EmailAddress, EmailingContext, Gmail, Resend, Sender as EmailSender,
-};
-use ferrumec::event::{EventStream, Identifier};
+use emailgrid::{Brevo, Console, EmailAddress, EmailingContext, Gmail, Resend, Sender as EmailSender};
+use ferrumec::cache::CacheFactory;
+use ferrumec::event::EventStream;
 use ferrumec::{Infra, Module as FerrumecModule};
-use mgk::{CreatePreference, IdResolver, Module as Mgk, Sender};
-use push::{Config, NotificationRequest};
-use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, PgPool, Pool, Postgres};
+use mgk::Module as Mgk;
+use push::Push;
+use resolver::IdResolver;
+use sqlx::{Pool, Postgres};
 use std::sync::Arc;
 use tagging::TagViewSet;
-use uuid::Uuid;
-use viewset::{DefaultRepo, Entity, ViewSet};
+use viewset::web::SessionMiddleware;
+use viewset::ViewSet;
+pub use resolver::MyIdResolver;
 
 pub mod app;
 pub mod config;
@@ -36,118 +36,12 @@ pub mod session;
 mod in_app;
 mod mgk;
 mod push;
+mod resolver;
 mod tagging;
-
-use ferrumec::cache::CacheFactory;
-
-struct Push(Config);
-struct Email(EmailingContext);
 
 pub type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
-// NOTE on the `user_id` field below: it is deliberately not called `user`.
-// `user` is a reserved word in PostgreSQL and viewset's generated SQL does not
-// quote identifiers. `subject` and `user_id` are `filterable` because
-// `Preferences::get` looks rows up with them — viewset silently ignores
-// filters on columns that are not declared filterable.
-
-#[derive(Entity, Serialize, Deserialize, Clone, FromRow)]
-#[entity(table = "email_preferences", create = "CreatePreference")]
-struct EmailPreference {
-    #[entity(skip_create)]
-    id: Uuid,
-    #[entity(filterable)]
-    pub subject: String,
-    pub address: String,
-    #[entity(filterable)]
-    pub user_id: String,
-}
-
-type EmailRepo = DefaultRepo<EmailPreference>;
-
-#[derive(Entity, Serialize, Deserialize, Clone, FromRow)]
-#[entity(table = "push_preferences", create = "CreatePreference")]
-struct PushPreference {
-    #[entity(skip_create)]
-    id: Uuid,
-    #[entity(filterable)]
-    pub subject: String,
-    pub address: String,
-    #[entity(filterable)]
-    pub user_id: String,
-}
-
-type PushRepo = DefaultRepo<PushPreference>;
-
-pub struct MyIdResolver {
-    pool: PgPool,
-}
-
-impl MyIdResolver {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
-    }
-}
-
-#[async_trait::async_trait]
-impl IdResolver for MyIdResolver {
-    async fn resolve(&self, id: Identifier) -> Result<Uuid> {
-        match id {
-            Identifier::Uuid(id) => Ok(id),
-
-            Identifier::Tag(tag) => {
-                let user_id: Uuid =
-                    sqlx::query_scalar("SELECT user_id FROM notification_tags WHERE tag = $1")
-                        .bind(tag)
-                        .fetch_one(&self.pool)
-                        .await?;
-
-                Ok(user_id)
-            }
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl Sender for Push {
-    async fn send(&self, address: String, _subject: String, message: String) -> Result<()> {
-        let notification = NotificationRequest {
-            message,
-            targets: vec![address],
-        };
-        self.0.push("push".to_string(), notification);
-        Ok(())
-    }
-}
-
-#[async_trait::async_trait]
-impl Sender for Email {
-    async fn send(&self, address: String, subject: String, message: String) -> Result<()> {
-        // The template builder needs a JSON object. Anything else (e.g. the bare
-        // OTP "123456" sent by /preferences/set) is exposed to the template as
-        // `{{ value }}`.
-        let message = match serde_json::from_str::<serde_json::Value>(&message) {
-            Ok(v) if v.is_object() => message,
-            Ok(v) => serde_json::json!({ "value": v }).to_string(),
-            Err(_) => serde_json::json!({ "value": message }).to_string(),
-        };
-        // Template / build errors surface here...
-        let response = self.0.send(address, subject, message).await?;
-        // ...and so do transport errors and non-2xx answers from the provider, so
-        // the caller can log them instead of silently dropping the email.
-        match response {
-            Ok(resp) if resp.status().is_success() => Ok(()),
-            Ok(resp) => Err(anyhow::anyhow!(
-                "email provider responded with status {}",
-                resp.status()
-            )
-            .into()),
-            Err(e) => Err(anyhow::anyhow!("email provider request failed: {e}").into()),
-        }
-    }
-}
-
-/// The notification module: delivery channels (email, push), their
+/// The notification module: delivery channels (email, push, in-app), the email
 /// preference endpoints, notification tags and the websocket push endpoint.
 ///
 /// Implements [`ferrumec::Module`], so it is built from any [`Infra`] (database
@@ -156,11 +50,9 @@ impl Sender for Email {
 ///
 /// Every route lives behind [`RequiredSession`]: the session cookie is resolved
 /// against the shared `session:` cache written by the auth service.
-use viewset::web::SessionMiddleware;
 pub struct NotificationModule {
-    emailer: Mgk<EmailRepo>,
-    push_mgk: Mgk<PushRepo>,
-    push_: Config,
+    email: Mgk,
+    push: Push,
     in_app: in_app::InApp,
     tags: TagViewSet,
     session: Arc<SessionMiddleware>,
@@ -187,36 +79,23 @@ impl NotificationModule {
         cfg: &ModuleConfig,
     ) -> Result<Self> {
         let session = Arc::new(SessionMiddleware::new(kv.clone()));
-        let emailer = build_emailer(cfg)?;
+        let emailing = build_emailer(cfg)?;
         let subjects = &cfg.subjects;
-        let settings = cfg.settings.clone();
 
-        let idres = Arc::new(MyIdResolver::new(pool.clone()));
+        let idres: Arc<dyn IdResolver> = Arc::new(MyIdResolver::new(pool.clone()));
 
-        let push_ = Config::new().await;
-        let repo = PushRepo::new(pool.clone(), kv.clone());
-        let push_mgk = Mgk::new(
-            Arc::new(repo),
-            es.clone(),
-            Arc::new(Push(push_.clone())),
-            idres.clone(),
-            subjects.push.clone(),
-            kv.clone(),
-            settings.clone(),
-        )
-        .await?;
-
-        let repo = EmailRepo::new(pool.clone(), kv.clone());
         let email = Mgk::new(
-            Arc::new(repo),
+            pool.clone(),
             es.clone(),
-            Arc::new(Email(emailer)) as Arc<dyn Sender>,
+            emailing,
             idres.clone(),
             subjects.email.clone(),
             kv.clone(),
-            settings,
+            cfg.settings.clone(),
         )
         .await?;
+
+        let push = Push::new(es.clone(), idres.clone(), subjects.push.clone()).await;
 
         let in_app = in_app::InApp::new(
             pool.clone(),
@@ -228,9 +107,8 @@ impl NotificationModule {
         .await;
 
         Ok(Self {
-            emailer: email,
-            push_mgk,
-            push_,
+            email,
+            push,
             in_app,
             tags: tagging::create_tag_viewset(pool, kv),
             session,
@@ -258,16 +136,15 @@ impl FerrumecModule for NotificationModule {
     /// * `tags` – notification tag CRUD
     /// * `ws/` – websocket push
     /// * `in-app` – `GET` the caller's stored in-app notifications
-    /// * `email|push/preferences/{set,confirm,get}`
+    /// * `email/preferences/{set,confirm,get}`
     fn configure(self: Arc<Self>, cfg: &mut ServiceConfig, namespace: &str) {
         cfg.service(
             web::scope(namespace)
                 .wrap(self.session.clone())
                 .configure(|cfg| self.tags.clone().configure(cfg, "tags"))
-                .configure(|cfg| self.push_.config(cfg, "/ws"))
+                .configure(|cfg| self.push.config(cfg, "/ws"))
                 .configure(|cfg| self.in_app.config(cfg, "/in-app"))
-                .configure(|cfg| self.emailer.config(cfg, "/email"))
-                .configure(|cfg| self.push_mgk.config(cfg, "/push")),
+                .configure(|cfg| self.email.config(cfg, "/email")),
         );
     }
 }

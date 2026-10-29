@@ -1,5 +1,6 @@
+use crate::Result;
 use crate::config::Settings;
-use crate::mgk::CreatePreference;
+use crate::mgk::{EmailPreference, EmailRepo};
 use ferrumec::Store;
 use ferrumec::cache::CacheFactory;
 use ferrumec::event::{Event, EventStream, EventType};
@@ -11,7 +12,9 @@ use std::time::Duration;
 use validator::Validate;
 use viewset::{Entity, Repository};
 
-pub type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+/// Channel name carried on `ChannelConfirmed` events and used to name the caches.
+const CHANNEL: &str = "email";
+const TABLE: &str = <EmailPreference as Entity>::TABLE;
 
 fn gen_otp() -> u32 {
     let mut rng = rand::rng();
@@ -83,42 +86,31 @@ struct PendingEntry {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
-pub struct Preferences<Repo: Repository> {
-    db: Arc<Repo>,
+pub struct Preferences {
+    db: Arc<EmailRepo>,
     /// Shared (Redis) store: pending OTPs and the (user, subject) -> address cache.
     kv: Arc<dyn Store<(String, String), PendingEntry>>,
     allowed_subjects: HashSet<String>,
-    /// Channel name derived from the entity table ("email_preferences" -> "email").
-    channel: String,
     /// (user, subject) -> address. Read on every notification delivery.
     addresses: Arc<dyn Store<(String, String), String>>,
     es: Arc<dyn EventStream>,
 }
 
-impl<Repo: Repository> Preferences<Repo>
-where
-    <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
-{
+impl Preferences {
     pub async fn new(
-        db: Arc<Repo>,
+        db: Arc<EmailRepo>,
         es: Arc<dyn EventStream>,
         subjects: Vec<String>,
         cf: impl CacheFactory,
         settings: Settings,
     ) -> Result<Self> {
-        let table = <<Repo as Repository>::Entity as Entity>::TABLE;
-        let channel = table
-            .strip_suffix("_preferences")
-            .unwrap_or(table)
-            .to_string();
-        let kv = cf.new_cache(&channel, Duration::from_mins(30));
-        let addresses = cf.new_cache(&format!("{channel}_addresses"), settings.cache_ttl);
+        let kv = cf.new_cache(CHANNEL, Duration::from_mins(30));
+        let addresses = cf.new_cache(&format!("{CHANNEL}_addresses"), settings.cache_ttl);
         Ok(Self {
             db,
             es,
             kv,
             addresses,
-            channel,
             allowed_subjects: subjects.into_iter().collect(),
         })
     }
@@ -128,7 +120,7 @@ where
     //
     // The nonce is an opaque handle stored server-side; the OTP is the
     // 6-digit code sent out-of-band to the user.  The handler sends the OTP
-    // via the Sender and returns the nonce in the HTTP response so the client
+    // via the email channel and returns the nonce in the HTTP response so the client
     // can pair them on /confirm.
     // -----------------------------------------------------------------------
     pub async fn set(&self, user: &str, batch: PreferenceBatch) -> Result<(String, u32)> {
@@ -192,7 +184,7 @@ where
         let upsert = format!(
             "INSERT INTO {} (subject, address, user_id) VALUES ($1, $2, $3) \
              ON CONFLICT (user_id, subject) DO UPDATE SET address = EXCLUDED.address",
-            <<Repo as Repository>::Entity as Entity>::TABLE
+            TABLE
         );
 
         for (subject, address) in &entry.items {
@@ -210,7 +202,7 @@ where
 
             let event = ChannelConfirmed {
                 user: user.to_string(),
-                channel: self.channel.clone(),
+                channel: CHANNEL.to_string(),
                 address: address.clone(),
             };
 
@@ -234,7 +226,7 @@ where
         }
         let sql = format!(
             "SELECT address FROM {} WHERE user_id = $1 AND subject = $2 LIMIT 1",
-            <<Repo as Repository>::Entity as Entity>::TABLE
+            TABLE
         );
         let address = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql))
             .bind(user)

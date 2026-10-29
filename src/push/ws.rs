@@ -7,6 +7,7 @@ use actix_web_actors::ws;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct Service {
@@ -18,6 +19,16 @@ pub struct MessageOnTrans {
     pub id: String,
     pub source: String,
     pub payload: String,
+}
+
+impl MessageOnTrans {
+    pub fn new(source: String, message: String) -> Self {
+        MessageOnTrans {
+            id: Uuid::new_v4().to_string(),
+            source,
+            payload: message,
+        }
+    }
 }
 
 pub fn deliver_message(msg: &MessageOnTrans, targets: Vec<String>, bus: Addr<ChatServer>) {

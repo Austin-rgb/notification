@@ -1,14 +1,10 @@
-use std::sync::Arc;
-
-use crate::mgk::Sender;
+use crate::mgk::Email;
 use crate::mgk::prefs::db::Preferences;
 use crate::mgk::prefs::db::{PreferenceBatch, Token};
-use crate::mgk::CreatePreference;
 use actix_web::web;
 use actix_web::{HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use tracing::error;
-use viewset::{Entity, Repository};
 
 // ---------------------------------------------------------------------------
 // Preferences
@@ -33,15 +29,12 @@ pub struct ConfirmBody {
     pub token: u32,
 }
 
-pub async fn set_preference<Repo: Repository>(
+pub async fn set_preference(
     session: web::ReqData<viewset::web::Identity>,
-    state: web::Data<Preferences<Repo>>,
-    sender: web::Data<Arc<dyn Sender>>,
+    state: web::Data<Preferences>,
+    email: web::Data<Email>,
     body: web::Json<PreferenceBatch>,
-) -> impl Responder
-where
-    <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
-{
+) -> impl Responder {
     let user_id = session.sub.to_string();
     let batch = body.into_inner();
 
@@ -58,7 +51,7 @@ where
             // response is still 200 because the pending entry was recorded
             // and the user may retry via /confirm within the TTL window.
             let message = serde_json::json!({ "otp": otp }).to_string();
-            let result = sender
+            let result = email
                 .send(address.clone(), "confirm address".to_owned(), message)
                 .await;
             if let Err(e) = result {
@@ -82,14 +75,11 @@ where
     }
 }
 
-pub async fn confirm_preference<Repo: Repository>(
+pub async fn confirm_preference(
     session: web::ReqData<viewset::web::Identity>,
-    state: web::Data<Preferences<Repo>>,
+    state: web::Data<Preferences>,
     body: web::Json<ConfirmBody>,
-) -> impl Responder
-where
-    <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
-{
+) -> impl Responder {
     let user_id = session.sub.to_string();
     let body = body.into_inner();
     let token = Token { token: body.token };
@@ -106,14 +96,11 @@ where
     }
 }
 
-pub async fn get_preference<Repo: Repository>(
+pub async fn get_preference(
     session: web::ReqData<viewset::web::Identity>,
-    state: web::Data<Preferences<Repo>>,
+    state: web::Data<Preferences>,
     query: web::Query<PreferenceGetQuery>,
-) -> impl Responder
-where
-    <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
-{
+) -> impl Responder {
     let user_id = session.sub.to_string();
     match state.get(&user_id, &query.subject).await {
         Ok(Some(channel)) => HttpResponse::Ok().json(channel),

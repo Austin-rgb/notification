@@ -1,17 +1,47 @@
+//! MGK: the email channel.
+//!
+//! Unlike in-app and push, email needs an address, so this module owns the
+//! preference flow (set -> OTP by email -> confirm) and only delivers to
+//! users who confirmed an address for the event's subject.
+
 use actix_web::web;
 use actix_web::web::ServiceConfig;
 use async_trait::async_trait;
-use ferrumec::event::EventMetaData;
-use ferrumec::event::{EventError, EventStream, Handler, Identifier};
+use ferrumec::cache::CacheFactory;
+use ferrumec::event::{EventError, EventMetaData, EventStream, Handler};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, from_str, from_value};
+use sqlx::{FromRow, PgPool};
 use std::sync::Arc;
 use uuid::Uuid;
-mod prefs;
+use viewset::{DefaultRepo, Entity};
+
+use crate::Result;
 use crate::config::Settings;
-use crate::mgk::prefs::db::{Preferences, Result};
-use ferrumec::cache::CacheFactory;
-use serde::{Deserialize, Serialize};
-use viewset::{Entity, Repository};
+use crate::emailgrid::EmailingContext;
+use crate::resolver::IdResolver;
+
+mod prefs;
+use prefs::config;
+use prefs::db::Preferences;
+
+// NOTE on the `user_id` field below: it is deliberately not called `user`.
+// `user` is a reserved word in PostgreSQL and viewset's generated SQL does not
+// quote identifiers. `subject` and `user_id` are `filterable` because
+// `Preferences::get` looks rows up with them — viewset silently ignores
+// filters on columns that are not declared filterable.
+
+#[derive(Entity, Serialize, Deserialize, Clone, FromRow)]
+#[entity(table = "email_preferences", create = "CreatePreference")]
+struct EmailPreference {
+    #[entity(skip_create)]
+    id: Uuid,
+    #[entity(filterable)]
+    pub subject: String,
+    pub address: String,
+    #[entity(filterable)]
+    pub user_id: String,
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CreatePreference {
@@ -21,44 +51,53 @@ pub struct CreatePreference {
     pub address: String,
 }
 
-/// Pluggable delivery backend.  Implementations must return an error on
-/// failure so that callers can log and surface delivery problems rather
-/// than silently dropping notifications.
-#[async_trait::async_trait]
-pub trait Sender: Send + Sync {
-    async fn send(&self, address: String, subject: String, message: String) -> Result<()>;
-}
+type EmailRepo = DefaultRepo<EmailPreference>;
 
-#[async_trait::async_trait]
-pub trait IdResolver: Send + Sync {
-    async fn resolve(&self, identifier: Identifier) -> Result<Uuid>;
+/// Email delivery on top of [`EmailingContext`].
+pub struct Email(EmailingContext);
+
+impl Email {
+    /// Sends one email. Returns an error on any failure (template, transport or
+    /// non-2xx from the provider) so callers can log it instead of silently
+    /// dropping the email.
+    pub async fn send(&self, address: String, subject: String, message: String) -> Result<()> {
+        // The template builder needs a JSON object. Anything else (e.g. a bare
+        // value) is exposed to the template as `{{ value }}`.
+        let message = match serde_json::from_str::<Value>(&message) {
+            Ok(v) if v.is_object() => message,
+            Ok(v) => serde_json::json!({ "value": v }).to_string(),
+            Err(_) => serde_json::json!({ "value": message }).to_string(),
+        };
+        // Template / build errors surface here...
+        let response = self.0.send(address, subject, message).await?;
+        // ...and so do transport errors and non-2xx answers from the provider.
+        match response {
+            Ok(resp) if resp.status().is_success() => Ok(()),
+            Ok(resp) => Err(anyhow::anyhow!(
+                "email provider responded with status {}",
+                resp.status()
+            )
+            .into()),
+            Err(e) => Err(anyhow::anyhow!("email provider request failed: {e}").into()),
+        }
+    }
 }
 
 #[derive(Clone)]
-pub struct Module<Repo: Repository> {
-    sender: Arc<dyn Sender>,
-    state: Arc<Preferences<Repo>>,
-    id_resolver: Arc<dyn IdResolver>,
+pub struct Module {
+    email: Arc<Email>,
+    state: Arc<Preferences>,
 }
 
-struct OnNotification<Repo: Repository> {
-    state: Arc<Preferences<Repo>>,
-    sender: Arc<dyn Sender>,
+struct OnNotification {
+    state: Arc<Preferences>,
+    email: Arc<Email>,
     id_resolver: Arc<dyn IdResolver>,
 }
-
-use crate::mgk::prefs::config;
 
 #[async_trait]
-impl<Repo: Repository + 'static> Handler for OnNotification<Repo>
-where
-    <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
-{
-    async fn handle(
-        &self,
-        subject: String,
-        message: Vec<u8>,
-    ) -> core::result::Result<(), EventError> {
+impl Handler for OnNotification {
+    async fn handle(&self, subject: String, message: Vec<u8>) -> core::result::Result<(), EventError> {
         let message = match String::from_utf8(message) {
             Ok(s) => s,
             Err(e) => {
@@ -99,40 +138,35 @@ where
                 }
             };
             if let Err(e) = self
-                .sender
+                .email
                 .send(address, subject.clone(), message.clone())
                 .await
             {
-                tracing::error!(error = %e, user = %user_id, subject, "Sender failed to deliver notification");
+                tracing::error!(error = %e, user = %user_id, subject, "Failed to deliver email notification");
             }
         }
         Ok(())
     }
 }
 
-impl<Repo: Repository + 'static> Module<Repo>
-where
-    <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
-{
+impl Module {
     pub async fn new(
-        pool: Arc<Repo>,
+        pool: PgPool,
         es: Arc<dyn EventStream>,
-        sender: Arc<dyn Sender>,
+        emailing: EmailingContext,
         id_resolver: Arc<dyn IdResolver>,
         subjects: Vec<String>,
         kv: impl CacheFactory,
         settings: Settings,
     ) -> Result<Self> {
-        let state = Arc::new(
-            Preferences::new(pool.clone(), es.clone(), subjects.clone(), kv, settings).await?,
-        );
+        let repo = Arc::new(EmailRepo::new(pool, kv.clone()));
+        let state = Arc::new(Preferences::new(repo, es.clone(), subjects.clone(), kv, settings).await?);
 
         let module = Self {
-            sender,
-            id_resolver,
+            email: Arc::new(Email(emailing)),
             state: state.clone(),
         };
-        module.subscribe(es, state, subjects).await;
+        module.subscribe(es, state, id_resolver, subjects).await;
         Ok(module)
     }
 
@@ -140,25 +174,24 @@ where
         cfg.service(
             web::scope(namespace)
                 .app_data(web::Data::from(self.state.clone()))
-                .app_data(web::Data::new(self.sender.clone()))
-                .configure(config::<Repo>),
+                .app_data(web::Data::from(self.email.clone()))
+                .configure(config),
         );
     }
 
-    pub async fn subscribe(
+    async fn subscribe(
         &self,
         es: Arc<dyn EventStream>,
-        state: Arc<Preferences<Repo>>,
+        state: Arc<Preferences>,
+        id_resolver: Arc<dyn IdResolver>,
         subjects: Vec<String>,
     ) {
         // Subscribe once per known subject rather than using the catch-all ">",
         // so we only wake up for events this module actually cares about.
-        //
-        // Fall back to a single ">" subscription if the subjects list is empty,
-        // which preserves the old behaviour for callers that don't restrict subjects.
+        // An empty list falls back to a single ">" subscription.
         let handler = Arc::new(OnNotification {
-            sender: self.sender.clone(),
-            id_resolver: self.id_resolver.clone(),
+            email: self.email.clone(),
+            id_resolver,
             state,
         });
 

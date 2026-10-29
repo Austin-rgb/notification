@@ -16,7 +16,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 use viewset::{DefaultRepo, Entity, Filters, Repository};
 
-use crate::mgk::IdResolver;
+use crate::resolver::IdResolver;
 
 /// One stored notification, as returned by the endpoint.
 #[derive(Entity, Clone, Serialize, Deserialize, FromRow)]
