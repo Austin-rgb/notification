@@ -33,6 +33,7 @@ pub mod config;
 pub mod emailgrid;
 pub mod session;
 
+mod in_app;
 mod mgk;
 mod push;
 mod tagging;
@@ -172,6 +173,7 @@ pub struct NotificationModule {
     emailer: Mgk<EmailRepo>,
     push_mgk: Mgk<PushRepo>,
     push_: Config,
+    in_app: in_app::InApp,
     tags: TagViewSet,
     session: Arc<SessionMiddleware>,
 }
@@ -228,10 +230,19 @@ impl NotificationModule {
         )
         .await?;
 
+        let in_app = in_app::InApp::new(
+            pool.clone(),
+            es.clone(),
+            idres.clone(),
+            subjects.in_app.clone(),
+        )
+        .await;
+
         Ok(Self {
             emailer: email,
             push_mgk,
             push_,
+            in_app,
             tags: tagging::create_tag_viewset(pool, kv),
             session,
         })
@@ -257,6 +268,7 @@ impl FerrumecModule for NotificationModule {
     ///
     /// * `tags` – notification tag CRUD
     /// * `ws/` – websocket push
+    /// * `in-app` – `GET` the caller's stored in-app notifications
     /// * `email|push/preferences/{set,confirm,get}`
     fn configure(self: Arc<Self>, cfg: &mut ServiceConfig, namespace: &str) {
         cfg.service(
@@ -264,6 +276,7 @@ impl FerrumecModule for NotificationModule {
                 .wrap(self.session.clone())
                 .configure(|cfg| self.tags.clone().configure(cfg, "tags"))
                 .configure(|cfg| self.push_.config(cfg, "/ws"))
+                .configure(|cfg| self.in_app.config(cfg, "/in-app"))
                 .configure(|cfg| self.emailer.config(cfg, "/email"))
                 .configure(|cfg| self.push_mgk.config(cfg, "/push")),
         );

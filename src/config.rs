@@ -46,6 +46,9 @@ impl fmt::Debug for Secret {
 pub struct Subjects {
     pub email: Vec<String>,
     pub push: Vec<String>,
+    /// Subjects stored as in-app notifications (`IN_APP_SUBJECTS`; defaults to
+    /// the push subjects when unset).
+    pub in_app: Vec<String>,
 }
 
 /// Tunables for the preference / OTP flow.
@@ -260,6 +263,12 @@ impl ModuleConfig {
             defaults.otp_ttl.as_secs(),
         )?;
 
+        let push_subjects = parse_subjects("PUSH_SUBJECTS", &required("PUSH_SUBJECTS")?)?;
+        let in_app_subjects = match optional("IN_APP_SUBJECTS") {
+            Some(raw) => parse_subjects("IN_APP_SUBJECTS", &raw)?,
+            None => push_subjects.clone(),
+        };
+
         Ok(Self {
             session_ttl: Duration::from_secs(parse_or(
                 "SESSION_TTL_SECS",
@@ -269,7 +278,8 @@ impl ModuleConfig {
             session_cookie: optional("SESSION_COOKIE").unwrap_or_else(|| "session".to_string()),
             subjects: Subjects {
                 email: parse_subjects("EMAIL_SUBJECTS", &required("EMAIL_SUBJECTS")?)?,
-                push: parse_subjects("PUSH_SUBJECTS", &required("PUSH_SUBJECTS")?)?,
+                push: push_subjects,
+                in_app: in_app_subjects,
             },
             settings: Settings {
                 cache_ttl: Duration::from_secs(cache_ttl),
