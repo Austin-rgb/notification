@@ -21,20 +21,6 @@ pub struct CreatePreference {
     pub address: String,
 }
 
-pub trait GetAddress {
-    fn get_address(&self) -> String;
-}
-
-impl CreatePreference {
-    pub fn new(user_id: String, subject: String, address: String) -> Self {
-        Self {
-            user_id,
-            subject,
-            address,
-        }
-    }
-}
-
 /// Pluggable delivery backend.  Implementations must return an error on
 /// failure so that callers can log and surface delivery problems rather
 /// than silently dropping notifications.
@@ -67,7 +53,6 @@ use crate::mgk::prefs::config;
 impl<Repo: Repository + 'static> Handler for OnNotification<Repo>
 where
     <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
-    <Repo as Repository>::Entity: GetAddress,
 {
     async fn handle(
         &self,
@@ -128,7 +113,6 @@ where
 impl<Repo: Repository + 'static> Module<Repo>
 where
     <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
-    <Repo as Repository>::Entity: GetAddress,
 {
     pub async fn new(
         pool: Arc<Repo>,

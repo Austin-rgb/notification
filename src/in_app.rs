@@ -18,15 +18,13 @@ use viewset::{DefaultRepo, Entity, Filters, Repository};
 
 use crate::mgk::IdResolver;
 
-const DEFAULT_LIMIT: i64 = 20;
-const MAX_LIMIT: i64 = 100;
-
 /// One stored notification, as returned by the endpoint.
 #[derive(Entity, Clone, Serialize, Deserialize, FromRow)]
 #[entity(create = "NewNotification")]
 pub struct InAppNotification {
     #[entity(skip_create)]
     pub id: Uuid,
+    #[entity(filterable)]
     pub user_id: Uuid,
     /// The event-stream subject it arrived on (e.g. `blogs.comment.created`).
     pub subject: String,
@@ -130,20 +128,12 @@ impl InApp {
     }
 
     pub fn config(&self, cfg: &mut web::ServiceConfig, namespace: &str) {
-        cfg.app_data(self.repo.clone()).service(
+        cfg.service(
             web::scope(namespace)
-                .app_data(web::Data::new(self.repo.clone()))
+                .app_data(web::Data::from(self.repo.clone()))
                 .route("", web::get().to(list)),
         );
     }
-}
-
-#[derive(Deserialize)]
-pub struct ListQuery {
-    /// Page size, 1..=100 (default 20).
-    pub limit: Option<i64>,
-    /// Cursor: only notifications older than this one (use `next_before`).
-    pub before: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Serialize)]
@@ -152,16 +142,16 @@ struct ListResponse {
     count: i64,
 }
 
-/// `GET /in-app?limit=20&before=<timestamp>` — the caller's notifications,
-/// newest first.
+/// `GET /in-app` — the caller's notifications. Query parameters are viewset
+/// filters; `user_id` is always forced to the session user.
 async fn list(
     session: viewset::web::Identity,
     repo: web::Data<Repo>,
     query: web::Query<Filters>,
 ) -> impl Responder {
-    let user_id = session.sub;
+    let user_id = session.sub.to_string();
     let mut filters = query.into_inner();
-    filters.insert("user_id".to_string(), user_id.to_string());
+    filters.insert("user_id".to_string(), user_id.clone());
     match repo.list(&filters).await {
         Ok((items, count)) => HttpResponse::Ok().json(ListResponse { items, count }),
         Err(e) => {

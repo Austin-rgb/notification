@@ -19,7 +19,7 @@ use emailgrid::{
 };
 use ferrumec::event::{EventStream, Identifier};
 use ferrumec::{Infra, Module as FerrumecModule};
-use mgk::{CreatePreference, GetAddress, IdResolver, Module as Mgk, Sender};
+use mgk::{CreatePreference, IdResolver, Module as Mgk, Sender};
 use push::{Config, NotificationRequest};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool, Pool, Postgres};
@@ -63,12 +63,6 @@ struct EmailPreference {
     pub user_id: String,
 }
 
-impl GetAddress for EmailPreference {
-    fn get_address(&self) -> String {
-        self.address.clone()
-    }
-}
-
 type EmailRepo = DefaultRepo<EmailPreference>;
 
 #[derive(Entity, Serialize, Deserialize, Clone, FromRow)]
@@ -81,12 +75,6 @@ struct PushPreference {
     pub address: String,
     #[entity(filterable)]
     pub user_id: String,
-}
-
-impl GetAddress for PushPreference {
-    fn get_address(&self) -> String {
-        self.address.clone()
-    }
 }
 
 type PushRepo = DefaultRepo<PushPreference>;

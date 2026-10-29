@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::mgk::Sender;
 use crate::mgk::prefs::db::Preferences;
 use crate::mgk::prefs::db::{PreferenceBatch, Token};
-use crate::mgk::{CreatePreference, GetAddress};
+use crate::mgk::CreatePreference;
 use actix_web::web;
 use actix_web::{HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
@@ -41,7 +41,6 @@ pub async fn set_preference<Repo: Repository>(
 ) -> impl Responder
 where
     <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
-    <Repo as Repository>::Entity: GetAddress,
 {
     let user_id = session.sub.to_string();
     let batch = body.into_inner();
@@ -90,7 +89,6 @@ pub async fn confirm_preference<Repo: Repository>(
 ) -> impl Responder
 where
     <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
-    <Repo as Repository>::Entity: GetAddress,
 {
     let user_id = session.sub.to_string();
     let body = body.into_inner();
@@ -115,7 +113,6 @@ pub async fn get_preference<Repo: Repository>(
 ) -> impl Responder
 where
     <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
-    <Repo as Repository>::Entity: GetAddress,
 {
     let user_id = session.sub.to_string();
     match state.get(&user_id, &query.subject).await {

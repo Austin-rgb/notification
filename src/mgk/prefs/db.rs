@@ -1,5 +1,5 @@
 use crate::config::Settings;
-use crate::mgk::{CreatePreference, GetAddress};
+use crate::mgk::CreatePreference;
 use ferrumec::Store;
 use ferrumec::cache::CacheFactory;
 use ferrumec::event::{Event, EventStream, EventType};
@@ -90,7 +90,6 @@ pub struct Preferences<Repo: Repository> {
     allowed_subjects: HashSet<String>,
     /// Channel name derived from the entity table ("email_preferences" -> "email").
     channel: String,
-    settings: Settings,
     /// (user, subject) -> address. Read on every notification delivery.
     addresses: Arc<dyn Store<(String, String), String>>,
     es: Arc<dyn EventStream>,
@@ -99,7 +98,6 @@ pub struct Preferences<Repo: Repository> {
 impl<Repo: Repository> Preferences<Repo>
 where
     <<Repo as Repository>::Entity as Entity>::CreateDto: From<CreatePreference>,
-    <Repo as Repository>::Entity: GetAddress,
 {
     pub async fn new(
         db: Arc<Repo>,
@@ -121,13 +119,8 @@ where
             kv,
             addresses,
             channel,
-            settings,
             allowed_subjects: subjects.into_iter().collect(),
         })
-    }
-
-    fn cache_key(&self, user: &str, subject: &str) -> String {
-        format!("pref:{}:{}:{}", self.channel, user, subject)
     }
 
     // -----------------------------------------------------------------------
